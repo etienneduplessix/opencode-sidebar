@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      background: #0f0f10;
+      color: #e4e4e7;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 12px 14px;
+      border-bottom: 1px solid #1f1f23;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #131316;
+    }
+    header .icon {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+    header h1 { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: -0.01em; }
+    #status {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+    }
+    #selection-bar {
+      padding: 10px 14px;
+      background: #18181b;
+      border-bottom: 1px solid #27272a;
+      display: none;
+    }
+    #selection-bar.visible { display: block; }
+    #selection-bar .label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #8b5cf6;
+      margin-bottom: 4px;
+    }
+    #selection-bar .text {
+      font-size: 12px;
+      color: #a1a1aa;
+      line-height: 1.4;
+      max-height: 48px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #messages:empty::after {
+      content: "Select text on any page to get started";
+      color: #52525b;
+      font-size: 12px;
+      text-align: center;
+      margin-top: 40px;
+    }
+    .msg {
+      padding: 10px 12px;
+      border-radius: 10px;
+      max-width: 88%;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+    }
+    .msg.user {
+      background: linear-gradient(135deg, #7c3aed, #6d28d9);
+      color: #fff;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.assistant {
+      background: #1e1e22;
+      color: #d4d4d8;
+      align-self: flex-start;
+      border: 1px solid #2a2a2e;
+      border-bottom-left-radius: 4px;
+    }
+    .msg.error {
+      background: rgba(127, 29, 29, 0.15);
+      color: #f87171;
+      align-self: flex-start;
+      border: 1px solid rgba(127, 29, 29, 0.3);
+    }
+    .msg .actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 6px;
+    }
+    .msg button {
+      padding: 4px 10px;
+      border: 1px solid #3f3f46;
+      border-radius: 6px;
+      background: transparent;
+      color: #a1a1aa;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .msg button:hover { border-color: #8b5cf6; color: #8b5cf6; }
+    .msg button.primary {
+      background: #7c3aed;
+      border-color: #7c3aed;
+      color: #fff;
+    }
+    .msg button.primary:hover { background: #6d28d9; }
+    .quick-actions {
+      padding: 8px 14px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      border-top: 1px solid #1f1f23;
+      background: #131316;
+    }
+    .quick-actions button {
+      padding: 5px 12px;
+      border: 1px solid #2a2a2e;
+      border-radius: 999px;
+      background: transparent;
+      color: #71717a;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .quick-actions button:hover {
+      border-color: #7c3aed;
+      color: #a78bfa;
+      background: rgba(124, 58, 237, 0.08);
+    }
+    #directory-bar {
+      padding: 8px 14px;
+      border-top: 1px solid #1f1f23;
+      background: #131316;
+    }
+    #directory-input {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #2a2a2e;
+      border-radius: 8px;
+      background: #0f0f10;
+      color: #71717a;
+      font-size: 11px;
+      transition: border-color 0.15s;
+    }
+    #directory-input:focus { outline: none; border-color: #7c3aed; }
+    #directory-input::placeholder { color: #3f3f46; }
+    #input-area {
+      padding: 10px 14px;
+      border-top: 1px solid #1f1f23;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      background: #131316;
+    }
+    #prompt {
+      flex: 1;
+      padding: 9px 12px;
+      border: 1px solid #2a2a2e;
+      border-radius: 10px;
+      background: #0f0f10;
+      color: #e4e4e7;
+      font-size: 13px;
+      resize: none;
+      min-height: 38px;
+      max-height: 120px;
+      line-height: 1.4;
+      transition: border-color 0.15s;
+    }
+    #prompt:focus { outline: none; border-color: #7c3aed; }
+    #prompt::placeholder { color: #3f3f46; }
+    #send {
+      padding: 9px 16px;
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #7c3aed, #6d28d9);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      height: 38px;
+    }
+    #send:hover { opacity: 0.9; }
+    #send:disabled { opacity: 0.4; cursor: default; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="icon">&#x1f916;</div>
+    <h1>OpenCode Sidebar</h1>
+    <div id="status"></div>
+  </header>
+
+  <div id="selection-bar">
+    <div class="label">Selected</div>
+    <div class="text" id="selection-text"></div>
+  </div>
+
+  <div id="messages"></div>
+
+  <div class="quick-actions">
+    <button data-action="fix">Fix grammar</button>
+    <button data-action="shorten">Shorten</button>
+    <button data-action="explain">Explain</button>
+    <button data-action="rewrite">Rewrite</button>
+  </div>
+
+  <div id="directory-bar">
+    <input type="text" id="directory-input" placeholder="Project folder (optional) — e.g. ~/Developement/perso/myproject" />
+  </div>
+
+  <div id="input-area">
+    <textarea id="prompt" placeholder="Ask OpenCode..." rows="1"></textarea>
+    <button id="send">Send</button>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

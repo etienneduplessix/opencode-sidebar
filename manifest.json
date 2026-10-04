@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "OpenCode Sidebar",
+  "version": "0.1.0",
+  "description": "Select text on any page, chat with OpenCode, and apply fixes in place.",
+  "permissions": ["activeTab", "tabs", "sidePanel", "scripting", "contextMenus", "storage"],
+  "host_permissions": ["http://127.0.0.1:19989/*", "http://localhost:4096/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["selection-capture.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "OpenCode Sidebar"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {}
+}
