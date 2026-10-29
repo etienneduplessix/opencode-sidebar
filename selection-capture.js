@@ -1,18 +1,31 @@
 let lastSelection = "";
 let debounceTimer = null;
 
+function safeSendMessage(payload) {
+  try {
+    if (!chrome || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") {
+      return;
+    }
+    chrome.runtime.sendMessage(payload).catch(function () {});
+  } catch (e) {
+  }
+}
+
 document.addEventListener("mouseup", () => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
-    const sel = window.getSelection();
-    const text = sel?.toString().trim() || "";
-    if (text && text !== lastSelection) {
-      lastSelection = text;
-      chrome.runtime.sendMessage({
-        action: "selection.changed",
-        text,
-        url: location.href
-      }).catch(() => {});
+    try {
+      const sel = window.getSelection();
+      const text = (sel && sel.toString().trim()) || "";
+      if (text && text !== lastSelection) {
+        lastSelection = text;
+        safeSendMessage({
+          action: "selection.changed",
+          text: text,
+          url: location.href
+        });
+      }
+    } catch (e) {
     }
   }, 300);
 });
@@ -20,17 +33,17 @@ document.addEventListener("mouseup", () => {
 document.addEventListener("keyup", (e) => {
   if (e.key === "Escape") {
     lastSelection = "";
-    chrome.runtime.sendMessage({ action: "selection.cleared" }).catch(() => {});
+    safeSendMessage({ action: "selection.cleared" });
   }
 });
 
-chrome.runtime.onMessage.addListener((message, sendResponse) => {
-  if (message?.action === "get_selection") {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message && message.action === "get_selection") {
     const sel = window.getSelection();
-    sendResponse({ text: sel?.toString() || "" });
+    sendResponse({ text: (sel && sel.toString()) || "" });
     return true;
   }
-  if (message?.action === "replace_selection") {
+  if (message && message.action === "replace_selection") {
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
@@ -42,7 +55,7 @@ chrome.runtime.onMessage.addListener((message, sendResponse) => {
     }
     return true;
   }
-  if (message?.action === "highlight_selection") {
+  if (message && message.action === "highlight_selection") {
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
@@ -52,7 +65,7 @@ chrome.runtime.onMessage.addListener((message, sendResponse) => {
       try {
         range.surroundContents(span);
         sendResponse({ success: true });
-      } catch {
+      } catch (err) {
         sendResponse({ success: false, error: "Cannot highlight partial selection" });
       }
     } else {

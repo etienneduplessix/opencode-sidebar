@@ -1,240 +1,833 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <title>OpenCode Sidebar</title>
   <style>
+    /* ============================================================
+       Design tokens — Apple-ish: SF type, hairline separators,
+       translucent materials, system accent blue.
+       ============================================================ */
+    :root {
+      color-scheme: light dark;
+
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+              "Helvetica Neue", Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+      --accent: #2563eb;
+      --accent-press: #1d4ed8;
+
+      --bg: #fafafa;
+
+      /* frosted glass materials */
+      --glass: rgba(255, 255, 255, 0.78);
+      --glass-strong: rgba(255, 255, 255, 0.92);
+      --glass-bubble: rgba(255, 255, 255, 0.95);
+      --glass-chip: rgba(255, 255, 255, 0.88);
+      --glass-line: rgba(255, 255, 255, 0.85);
+
+      --surface-solid: #ffffff;
+      --surface-2: rgba(255, 255, 255, 0.6);
+      --surface-sunken: rgba(0, 0, 0, 0.035);
+
+      --bubble-me: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+      --bubble-me-text: #ffffff;
+      --bubble-them: var(--glass-bubble);
+      --bubble-them-text: #09090b;
+
+      --text: #09090b;
+      --text-2: #52525b;
+      --text-3: #71717a;
+
+      --hairline: rgba(0, 0, 0, 0.09);
+      --hairline-2: rgba(0, 0, 0, 0.06);
+      --shadow-sm: 0 0.5px 1px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.12);
+      --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.18);
+      --focus-ring: 0 0 0 3.5px rgba(37, 99, 235, 0.24);
+
+      --danger: #dc2626;
+      --danger-bg: rgba(220, 38, 38, 0.08);
+      --danger-line: rgba(220, 38, 38, 0.20);
+      --success: #16a34a;
+
+      --mark-bg: linear-gradient(160deg, #52525b 0%, #18181b 100%);
+      --mark-fg: #ffffff;
+
+      --ease: cubic-bezier(0.32, 0.72, 0, 1);
+      --blur: saturate(160%) blur(24px);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --accent: #3b82f6;
+        --accent-press: #60a5fa;
+
+        --bg: #0c0c0e;
+
+        --glass: rgba(24, 24, 27, 0.72);
+        --glass-strong: rgba(24, 24, 27, 0.88);
+        --glass-bubble: rgba(31, 31, 35, 0.92);
+        --glass-chip: rgba(39, 39, 43, 0.78);
+        --glass-line: rgba(255, 255, 255, 0.10);
+
+        --surface-solid: #18181b;
+        --surface-2: rgba(255, 255, 255, 0.07);
+        --surface-sunken: rgba(255, 255, 255, 0.045);
+
+        --bubble-me: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+        --bubble-them: var(--glass-bubble);
+        --bubble-them-text: #fafafa;
+
+        --text: #fafafa;
+        --text-2: #a1a1aa;
+        --text-3: #8b8b93;
+
+        --hairline: rgba(255, 255, 255, 0.09);
+        --hairline-2: rgba(255, 255, 255, 0.055);
+        --shadow-sm: 0 0.5px 1px rgba(0, 0, 0, 0.4);
+        --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.5);
+        --shadow-lg: 0 20px 54px rgba(0, 0, 0, 0.6);
+        --focus-ring: 0 0 0 3.5px rgba(59, 130, 246, 0.40);
+
+        --danger: #f87171;
+        --danger-bg: rgba(248, 113, 113, 0.12);
+        --danger-line: rgba(248, 113, 113, 0.24);
+        --success: #4ade80;
+
+        --mark-bg: linear-gradient(160deg, #3f3f46 0%, #18181b 100%);
+        --mark-fg: #fafafa;
+      }
+    }
+
+    /* ============================================================ base */
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { height: 100%; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: var(--font);
       font-size: 13px;
-      background: #0f0f10;
-      color: #e4e4e7;
-      height: 100vh;
+      line-height: 1.45;
+      color: var(--text);
+      background-color: var(--bg);
+      background-image:
+        radial-gradient(900px 520px at 50% -14%, rgba(255, 255, 255, 0.85), transparent 62%),
+        radial-gradient(700px 420px at 100% 108%, rgba(0, 0, 0, 0.035), transparent 60%);
+      background-attachment: fixed;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
-    header {
-      padding: 12px 14px;
-      border-bottom: 1px solid #1f1f23;
+
+    /* Solid mode: opt out of the frosted material */
+    body.solid {
+      background-image: none;
+      --glass: #f4f4f5;
+      --glass-strong: #ffffff;
+      --glass-bubble: #ffffff;
+      --glass-chip: #ffffff;
+      --glass-line: rgba(255, 255, 255, 0.9);
+      --surface-2: #f4f4f5;
+      --surface-sunken: #ebebee;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-image:
+          radial-gradient(900px 520px at 50% -14%, rgba(255, 255, 255, 0.055), transparent 62%),
+          radial-gradient(700px 420px at 100% 108%, rgba(0, 0, 0, 0.35), transparent 60%);
+      }
+
+      body.solid {
+        --glass: #18181b;
+        --glass-strong: #18181b;
+        --glass-bubble: #27272a;
+        --glass-chip: #27272a;
+        --glass-line: rgba(255, 255, 255, 0.08);
+        --surface-2: #27272a;
+        --surface-sunken: #131315;
+      }
+    }
+
+    button, input, textarea {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
+    }
+
+    ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+    :focus { outline: none; }
+    :focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+
+    /* ============================================================ toolbar */
+    .toolbar {
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      background: var(--glass);
+      border-bottom: 0.5px solid var(--hairline);
+      box-shadow: inset 0 0.5px 0 var(--glass-line);
+      padding: 10px 12px;
       display: flex;
       align-items: center;
       gap: 10px;
-      background: #131316;
+      flex: 0 0 auto;
+      position: relative;
+      z-index: 5;
     }
-    header .icon {
-      width: 28px; height: 28px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #8b5cf6, #6d28d9);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 14px;
+
+    .mark {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      background: var(--mark-bg);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), inset 0 0.5px 0 rgba(255, 255, 255, 0.18);
+      color: var(--mark-fg);
     }
-    header h1 { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: -0.01em; }
-    #status {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: #22c55e;
-      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+    .mark svg { width: 15px; height: 15px; }
+
+    .toolbar h1 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    #selection-bar {
-      padding: 10px 14px;
-      background: #18181b;
-      border-bottom: 1px solid #27272a;
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+
+    .badge {
       display: none;
-    }
-    #selection-bar.visible { display: block; }
-    #selection-bar .label {
+      align-items: center;
+      gap: 4px;
+      height: 19px;
+      padding: 0 7px 0 5px;
+      border-radius: 9.5px;
+      background: color-mix(in srgb, var(--success) 16%, transparent);
+      color: var(--success);
       font-size: 10px;
       font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #8b5cf6;
-      margin-bottom: 4px;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
     }
+    .badge.visible { display: inline-flex; }
+    .badge svg { width: 10px; height: 10px; }
+
+    .icon-btn {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-2);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, transform 0.15s var(--ease);
+    }
+    .icon-btn:hover { background: var(--hairline-2); color: var(--text); }
+    .icon-btn:active { transform: scale(0.9); }
+    .icon-btn:disabled { opacity: 0.3; pointer-events: none; }
+    .icon-btn svg { width: 14px; height: 14px; }
+
+    #status {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-3);
+      box-shadow: 0 0 0 2.5px var(--hairline-2);
+      flex: 0 0 auto;
+      transition: background 0.25s, box-shadow 0.25s;
+    }
+    #status.ok {
+      background: var(--success);
+      box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--success) 16%, transparent);
+    }
+    #status.err {
+      background: var(--danger);
+      box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--danger) 16%, transparent);
+    }
+    #status.connected {
+      background: var(--success);
+      box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--success) 16%, transparent);
+    }
+
+    /* ============================================================ selection card */
+    #selection-bar {
+      display: none;
+      flex: 0 0 auto;
+      margin: 10px 12px 0;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--glass-strong);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      border: 0.5px solid var(--hairline);
+      box-shadow: var(--shadow-sm), inset 0 0.5px 0 var(--glass-line);
+      position: relative;
+      overflow: hidden;
+    }
+    #selection-bar.visible { display: block; animation: rise 0.28s var(--ease); }
+
+    #selection-bar::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: var(--accent);
+    }
+
+    #selection-bar .label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 5px;
+    }
+    #selection-bar .label svg { width: 11px; height: 11px; color: var(--accent); }
+
     #selection-bar .text {
       font-size: 12px;
-      color: #a1a1aa;
+      color: var(--text-2);
       line-height: 1.4;
-      max-height: 48px;
+      max-height: 46px;
       overflow: hidden;
       display: -webkit-box;
       -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
     }
+
+    /* ============================================================ messages */
     #messages {
-      flex: 1;
+      flex: 1 1 auto;
       overflow-y: auto;
-      padding: 14px;
+      overscroll-behavior: contain;
+      padding: 14px 12px 8px;
       display: flex;
       flex-direction: column;
       gap: 10px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--hairline) transparent;
     }
-    #messages:empty::after {
-      content: "Select text on any page to get started";
-      color: #52525b;
-      font-size: 12px;
-      text-align: center;
-      margin-top: 40px;
-    }
-    .msg {
-      padding: 10px 12px;
-      border-radius: 10px;
-      max-width: 88%;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-size: 13px;
-    }
-    .msg.user {
-      background: linear-gradient(135deg, #7c3aed, #6d28d9);
-      color: #fff;
-      align-self: flex-end;
-      border-bottom-right-radius: 4px;
-    }
-    .msg.assistant {
-      background: #1e1e22;
-      color: #d4d4d8;
-      align-self: flex-start;
-      border: 1px solid #2a2a2e;
-      border-bottom-left-radius: 4px;
-    }
-    .msg.error {
-      background: rgba(127, 29, 29, 0.15);
-      color: #f87171;
-      align-self: flex-start;
-      border: 1px solid rgba(127, 29, 29, 0.3);
-    }
-    .msg .actions {
-      margin-top: 8px;
-      display: flex;
-      gap: 6px;
-    }
-    .msg button {
-      padding: 4px 10px;
-      border: 1px solid #3f3f46;
-      border-radius: 6px;
-      background: transparent;
-      color: #a1a1aa;
-      font-size: 11px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .msg button:hover { border-color: #8b5cf6; color: #8b5cf6; }
-    .msg button.primary {
-      background: #7c3aed;
-      border-color: #7c3aed;
-      color: #fff;
-    }
-    .msg button.primary:hover { background: #6d28d9; }
-    .quick-actions {
-      padding: 8px 14px;
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      border-top: 1px solid #1f1f23;
-      background: #131316;
-    }
-    .quick-actions button {
-      padding: 5px 12px;
-      border: 1px solid #2a2a2e;
-      border-radius: 999px;
-      background: transparent;
-      color: #71717a;
-      font-size: 11px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .quick-actions button:hover {
-      border-color: #7c3aed;
-      color: #a78bfa;
-      background: rgba(124, 58, 237, 0.08);
-    }
-    #directory-bar {
-      padding: 8px 14px;
-      border-top: 1px solid #1f1f23;
-      background: #131316;
-    }
-    #directory-input {
-      width: 100%;
-      padding: 6px 10px;
-      border: 1px solid #2a2a2e;
-      border-radius: 8px;
-      background: #0f0f10;
-      color: #71717a;
-      font-size: 11px;
-      transition: border-color 0.15s;
-    }
-    #directory-input:focus { outline: none; border-color: #7c3aed; }
-    #directory-input::placeholder { color: #3f3f46; }
-    #input-area {
-      padding: 10px 14px;
-      border-top: 1px solid #1f1f23;
+
+    .row {
       display: flex;
       gap: 8px;
       align-items: flex-end;
-      background: #131316;
+      max-width: 100%;
+      animation: rise 0.3s var(--ease) both;
     }
+    .row.me { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      background: var(--mark-bg);
+      color: var(--mark-fg);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), inset 0 0.5px 0 rgba(255, 255, 255, 0.14);
+      margin-bottom: 1px;
+    }
+    .avatar svg { width: 13px; height: 13px; }
+
+    .msg {
+      padding: 8px 12px;
+      border-radius: 16px;
+      max-width: 84%;
+      line-height: 1.45;
+      font-size: 13px;
+      letter-spacing: -0.003em;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .msg-body {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.error {
+      display: flex;
+      gap: 7px;
+      align-items: flex-start;
+    }
+
+    .msg-icon {
+      flex: 0 0 auto;
+      margin-top: 1px;
+      color: var(--danger);
+    }
+    .msg-icon svg { display: block; width: 14px; height: 14px; }
+
+    .msg.user {
+      background: var(--bubble-me);
+      color: var(--bubble-me-text);
+      border-bottom-right-radius: 5px;
+    }
+
+    .msg.assistant {
+      background: var(--bubble-them);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      color: var(--bubble-them-text);
+      border: 0.5px solid var(--hairline);
+      box-shadow: var(--shadow-sm), inset 0 0.5px 0 var(--glass-line);
+      border-bottom-left-radius: 5px;
+    }
+
+    .msg.error {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border: 0.5px solid var(--danger-line);
+      box-shadow: none;
+    }
+
+    .msg.thinking {
+      background: var(--bubble-them);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      border: 0.5px solid var(--hairline);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 12px 13px;
+      box-shadow: var(--shadow-sm), inset 0 0.5px 0 var(--glass-line);
+    }
+    .msg.thinking i {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-3);
+      animation: blink 1.3s infinite;
+    }
+    .msg.thinking i:nth-child(2) { animation-delay: 0.18s; }
+    .msg.thinking i:nth-child(3) { animation-delay: 0.36s; }
+
+    /* action buttons inside messages */
+    .msg .actions {
+      margin-top: 9px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      height: 26px;
+      padding: 0 11px;
+      border-radius: 8px;
+      border: 0.5px solid var(--hairline);
+      background: var(--surface-2);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      box-shadow: var(--shadow-sm), inset 0 0.5px 0 var(--glass-line);
+      transition: transform 0.15s var(--ease), background 0.15s, filter 0.15s;
+    }
+    .btn:hover { filter: brightness(0.97); }
+    .btn:active { transform: scale(0.96); }
+    .btn svg { width: 12px; height: 12px; }
+
+    .btn.primary {
+      background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 80%, white) 0%, var(--accent) 100%);
+      border-color: transparent;
+      color: #fff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+    }
+    .btn.primary:hover { filter: brightness(1.05); }
+
+    .msg.user .btn {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.28);
+      color: #fff;
+    }
+    .msg.user .btn.primary {
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--accent);
+    }
+
+    /* ============================================================ empty state */
+    #empty {
+      margin: auto;
+      padding: 24px 20px 40px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    #empty.hidden { display: none; }
+
+    #empty .mark-lg {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: var(--mark-bg);
+      color: var(--mark-fg);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28), inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
+      margin-bottom: 12px;
+    }
+    #empty .mark-lg svg { width: 26px; height: 26px; }
+
+    #empty .t {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    #empty .s {
+      font-size: 12px;
+      color: var(--text-2);
+      max-width: 250px;
+      line-height: 1.45;
+    }
+
+    #empty .hints {
+      margin-top: 14px;
+      display: flex;
+      gap: 14px;
+      font-size: 11px;
+      color: var(--text-3);
+    }
+    #empty .hints span { display: inline-flex; align-items: center; gap: 4px; }
+    kbd {
+      font-family: var(--font);
+      font-size: 10px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      background: var(--surface-2);
+      border: 0.5px solid var(--hairline);
+      box-shadow: var(--shadow-sm);
+      color: var(--text-2);
+    }
+
+    /* ============================================================ chips */
+    .quick-actions {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 6px;
+      padding: 8px 12px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      border-top: 0.5px solid var(--hairline-2);
+      -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 18px), transparent 100%);
+      mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 18px), transparent 100%);
+    }
+    .quick-actions::-webkit-scrollbar { display: none; }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 27px;
+      padding: 0 11px;
+      border-radius: 13.5px;
+      border: 0.5px solid var(--hairline);
+      background: var(--glass-chip);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      color: var(--text-2);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: -0.005em;
+      white-space: nowrap;
+      cursor: pointer;
+      flex: 0 0 auto;
+      box-shadow: var(--shadow-sm), inset 0 0.5px 0 var(--glass-line);
+      transition: transform 0.15s var(--ease), background 0.15s, color 0.15s;
+    }
+    .chip:hover {
+      background: color-mix(in srgb, var(--accent) 16%, var(--glass-chip));
+      color: var(--accent);
+    }
+    .chip:active { transform: scale(0.95); }
+    .chip svg { width: 12px; height: 12px; }
+
+    /* ============================================================ composer */
+    #composer {
+      flex: 0 0 auto;
+      background: var(--glass);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      border-top: 0.5px solid var(--hairline);
+      box-shadow: inset 0 0.5px 0 var(--glass-line);
+      padding: 8px 12px 10px;
+    }
+
+    #directory-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 9px;
+      margin-bottom: 7px;
+      border-radius: 9px;
+      background: var(--surface-sunken);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      border: 0.5px solid var(--hairline-2);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    #directory-bar:focus-within {
+      border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+      box-shadow: var(--focus-ring);
+    }
+    #directory-bar svg { width: 12px; height: 12px; color: var(--text-3); flex: 0 0 auto; }
+
+    #directory-input {
+      flex: 1;
+      min-width: 0;
+      border: none;
+      background: transparent;
+      font-size: 11.5px;
+      color: var(--text);
+    }
+    #directory-input::placeholder { color: var(--text-3); }
+
+    #input-area {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      padding: 7px 7px 7px 11px;
+      border-radius: 19px;
+      background: var(--glass-strong);
+      -webkit-backdrop-filter: var(--blur);
+      backdrop-filter: var(--blur);
+      border: 0.5px solid var(--hairline);
+      box-shadow: var(--shadow-sm), inset 0 0.5px 0 var(--glass-line);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    #input-area:focus-within {
+      border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+      box-shadow: var(--shadow-md), 0 0 0 3.5px color-mix(in srgb, var(--accent) 16%, transparent);
+    }
+
     #prompt {
       flex: 1;
-      padding: 9px 12px;
-      border: 1px solid #2a2a2e;
-      border-radius: 10px;
-      background: #0f0f10;
-      color: #e4e4e7;
-      font-size: 13px;
+      min-width: 0;
+      border: none;
+      background: transparent;
       resize: none;
-      min-height: 38px;
-      max-height: 120px;
-      line-height: 1.4;
-      transition: border-color 0.15s;
-    }
-    #prompt:focus { outline: none; border-color: #7c3aed; }
-    #prompt::placeholder { color: #3f3f46; }
-    #send {
-      padding: 9px 16px;
-      border: 0;
-      border-radius: 10px;
-      background: linear-gradient(135deg, #7c3aed, #6d28d9);
-      color: #fff;
       font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.15s;
-      height: 38px;
+      line-height: 1.45;
+      color: var(--text);
+      min-height: 22px;
+      max-height: 140px;
+      overflow-y: auto;
+      padding: 0;
+      margin: 0;
     }
-    #send:hover { opacity: 0.9; }
-    #send:disabled { opacity: 0.4; cursor: default; }
-    ::-webkit-scrollbar { width: 4px; }
+    #prompt::placeholder { color: var(--text-3); }
+
+    #send {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 50%;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 80%, white) 0%, var(--accent) 100%);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      transition: transform 0.15s var(--ease), opacity 0.15s, filter 0.15s;
+    }
+    #send svg { width: 15px; height: 15px; }
+    #send:hover { filter: brightness(1.06); }
+    #send:active { transform: scale(0.9); }
+    #send:disabled {
+      opacity: 0.35;
+      cursor: default;
+      filter: grayscale(0.4);
+      transform: none;
+    }
+
+    /* ============================================================ scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--hairline);
+      border-radius: 4px;
+      border: 2px solid transparent;
+      background-clip: content-box;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-3); background-clip: content-box; }
+
+    /* ============================================================ motion */
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(6px) scale(0.985); }
+      to   { opacity: 1; transform: none; }
+    }
+    @keyframes blink {
+      0%, 60%, 100% { opacity: 0.25; transform: scale(0.85); }
+      30%           { opacity: 1;    transform: scale(1); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <div class="icon">&#x1f916;</div>
+  <header class="toolbar">
+    <span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 7 4 12l4 5"/><path d="M16 7l4 5-4 5"/><path d="M13.5 5 10.5 19"/>
+      </svg>
+    </span>
     <h1>OpenCode Sidebar</h1>
-    <div id="status"></div>
+    <div class="toolbar-actions">
+      <span id="readpage-indicator" class="badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+        PAGE LOADED
+      </span>
+      <button id="appearance" class="icon-btn" title="Use solid surfaces" aria-label="Toggle frosted glass" aria-pressed="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+      <button id="clear" class="icon-btn" title="Clear conversation" aria-label="Clear conversation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/>
+        </svg>
+      </button>
+      <div id="status" title="Service status"></div>
+    </div>
   </header>
 
   <div id="selection-bar">
-    <div class="label">Selected</div>
+    <div class="label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+      </svg>
+      Selected
+    </div>
     <div class="text" id="selection-text"></div>
   </div>
 
-  <div id="messages"></div>
-
-  <div class="quick-actions">
-    <button data-action="fix">Fix grammar</button>
-    <button data-action="shorten">Shorten</button>
-    <button data-action="explain">Explain</button>
-    <button data-action="rewrite">Rewrite</button>
+  <div id="messages" role="log" aria-live="polite" aria-label="Conversation">
+    <div id="empty">
+      <span class="mark-lg" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 7 4 12l4 5"/><path d="M16 7l4 5-4 5"/><path d="M13.5 5 10.5 19"/>
+        </svg>
+      </span>
+      <p class="t">Select text on any page</p>
+      <p class="s">Highlight something in the tab, then ask OpenCode to fix it, explain it, or act on the page.</p>
+      <div class="hints">
+        <span><kbd>&#9166;</kbd> send</span>
+        <span><kbd>&#8679;</kbd><kbd>&#9166;</kbd> new line</span>
+      </div>
+    </div>
   </div>
 
-  <div id="directory-bar">
-    <input type="text" id="directory-input" placeholder="Project folder (optional) — e.g. ~/Developement/perso/myproject" />
+  <div class="quick-actions" role="toolbar" aria-label="Quick actions">
+    <button class="chip" data-action="readpage">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>
+      </svg>
+      Read page
+    </button>
+    <button class="chip" data-action="summarize">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m12 3 1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M18 16.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z"/>
+      </svg>
+      Summarize
+    </button>
+    <button class="chip" data-action="act">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/>
+      </svg>
+      Suggest actions
+    </button>
+    <button class="chip" data-action="fix">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7V4h3"/><path d="M20 7V4h-3"/><path d="M4 17v3h3"/><path d="M20 17v3h-3"/><path d="M8 12h8"/>
+      </svg>
+      Fix grammar
+    </button>
+    <button class="chip" data-action="shorten">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 9h16"/><path d="M12 4v5"/><path d="m8 6 4-4 4 4"/><path d="M4 17h8"/><path d="m6 15-2 2 2 2"/>
+      </svg>
+      Shorten
+    </button>
+    <button class="chip" data-action="explain">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.5.4.8 1 .9 1.6l.1.5h5l.1-.5c.1-.6.4-1.2.9-1.6A6 6 0 0 0 12 3z"/>
+      </svg>
+      Explain
+    </button>
+    <button class="chip" data-action="rewrite">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>
+      </svg>
+      Rewrite
+    </button>
   </div>
 
-  <div id="input-area">
-    <textarea id="prompt" placeholder="Ask OpenCode..." rows="1"></textarea>
-    <button id="send">Send</button>
+  <div id="composer">
+    <div id="directory-bar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2"/><path d="M3.5 20 8 12h13l-4.5 8z"/>
+      </svg>
+      <input type="text" id="directory-input" placeholder="Project folder (optional)"
+             aria-label="Project folder OpenCode should work in"
+             title="Folder OpenCode should work in — e.g. ~/Developement/perso/myproject" />
+    </div>
+    <div id="input-area">
+      <textarea id="prompt" placeholder="Ask OpenCode…" aria-label="Message to OpenCode" rows="1"></textarea>
+      <button id="send" title="Send" aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>
+        </svg>
+      </button>
+    </div>
   </div>
 
   <script src="sidepanel.js"></script>
