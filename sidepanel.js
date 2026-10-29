@@ -8,6 +8,24 @@ const pageIndicator = document.getElementById("readpage-indicator");
 const clearBtn = document.getElementById("clear");
 const appearanceBtn = document.getElementById("appearance");
 const directoryInput = document.getElementById("directory-input");
+const settingsBtn = document.getElementById("settings");
+const settingsPopover = document.getElementById("settings-popover");
+const settingsStatus = document.getElementById("settings-status");
+const modelBtn = document.getElementById("model-btn");
+const modelName = document.getElementById("model-name");
+const modelPopover = document.getElementById("model-popover");
+const modelList = document.getElementById("model-list");
+const modelSearch = document.getElementById("model-search");
+const modelCount = document.getElementById("model-count");
+
+const setHost = document.getElementById("set-host");
+const setPort = document.getElementById("set-port");
+const setUser = document.getElementById("set-user");
+const setPass = document.getElementById("set-pass");
+const togglePass = document.getElementById("toggle-pass");
+const detectBtn = document.getElementById("detect");
+const testBtn = document.getElementById("test");
+const saveSettingsBtn = document.getElementById("save-settings");
 
 const MARK_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
@@ -434,6 +452,245 @@ function refreshSelection() {
   }).catch(() => {});
 }
 
+// ------------------------------------------------------------------ model picker
+
+let allModels = [];
+let currentModelId = "";
+let currentProviderId = "";
+
+function setPopover(popover, open) {
+  popover.hidden = !open;
+  const trigger = popover === modelPopover ? modelBtn : settingsBtn;
+  trigger.setAttribute("aria-expanded", String(open));
+  if (open) {
+    if (popover === modelPopover) {
+      modelSearch.value = "";
+      renderModels();
+      setTimeout(() => modelSearch.focus(), 30);
+    }
+  }
+}
+
+function closePopovers() {
+  setPopover(modelPopover, false);
+  setPopover(settingsPopover, false);
+}
+
+function renderModels() {
+  const query = modelSearch.value.trim().toLowerCase();
+  const matches = allModels.filter((m) => {
+    if (!query) return true;
+    return (
+      m.name.toLowerCase().includes(query) ||
+      m.id.toLowerCase().includes(query) ||
+      m.providerID.toLowerCase().includes(query)
+    );
+  });
+
+  modelList.innerHTML = "";
+
+  if (!allModels.length) {
+    const empty = document.createElement("div");
+    empty.className = "model-item";
+    empty.style.color = "var(--text-3)";
+    empty.textContent = "No models loaded — check the connection settings.";
+    modelList.appendChild(empty);
+    modelCount.textContent = "";
+    return;
+  }
+
+  // Group by provider, keep the order the server returned.
+  const groups = [];
+  const index = new Map();
+  for (const m of matches) {
+    if (!index.has(m.providerID)) {
+      index.set(m.providerID, groups.length);
+      groups.push({ provider: m.providerID, models: [] });
+    }
+    groups[index.get(m.providerID)].models.push(m);
+  }
+
+  const LIMIT = 80;
+  let shown = 0;
+  for (const group of groups) {
+    if (shown >= LIMIT) break;
+    const heading = document.createElement("div");
+    heading.className = "model-group";
+    heading.textContent = group.provider;
+    modelList.appendChild(heading);
+
+    for (const m of group.models) {
+      if (shown >= LIMIT) break;
+      shown++;
+      const item = document.createElement("div");
+      item.className = "model-item" + (m.id === currentModelId && m.providerID === currentProviderId ? " selected" : "");
+      const name = document.createElement("span");
+      name.className = "m-name";
+      name.textContent = m.name;
+      const id = document.createElement("span");
+      id.className = "m-id";
+      id.textContent = m.id;
+      item.appendChild(name);
+      item.appendChild(id);
+      item.addEventListener("click", () => selectModel(m));
+      modelList.appendChild(item);
+    }
+  }
+
+  modelCount.textContent =
+    shown < matches.length ? `${shown} of ${matches.length} shown` : `${matches.length} model${matches.length === 1 ? "" : "s"}`;
+}
+
+function syncModelLabel() {
+  const found = allModels.find(
+    (m) => m.id === currentModelId && m.providerID === currentProviderId
+  );
+  const label = found ? found.name : currentModelId;
+  modelName.textContent = label || "Model";
+  modelName.title = found ? `${found.name} — ${found.providerID}` : currentModelId || "No model selected";
+}
+
+async function loadModels() {
+  const res = await chrome.runtime.sendMessage({ action: "list_models" });
+  if (!res?.success) {
+    allModels = [];
+    modelCount.textContent = res?.error || "Could not load models";
+    renderModels();
+    return;
+  }
+  allModels = res.models || [];
+  syncModelLabel();
+  renderModels();
+}
+
+function selectModel(model) {
+  currentModelId = model.id;
+  currentProviderId = model.providerID;
+  syncModelLabel();
+  chrome.runtime.sendMessage({
+    action: "save_settings",
+    settings: { modelId: model.id, providerId: model.providerID }
+  });
+  closePopovers();
+}
+
+// ------------------------------------------------------------------ settings
+
+function showSettingsStatus(text, kind) {
+  settingsStatus.textContent = text;
+  settingsStatus.className = "popover-status show" + (kind ? " " + kind : "");
+}
+
+function fillSettings(settings) {
+  setHost.value = settings.host || "";
+  setPort.value = settings.port || "";
+  setUser.value = settings.username || "";
+  setPass.value = settings.password || "";
+}
+
+async function loadSettings() {
+  const settings = await chrome.runtime.sendMessage({ action: "get_settings" });
+  if (settings) {
+    fillSettings(settings);
+    currentModelId = settings.modelId || "";
+    currentProviderId = settings.providerId || "";
+  }
+  return settings;
+}
+
+async function saveSettings() {
+  const settings = {
+    host: setHost.value,
+    port: setPort.value,
+    username: setUser.value,
+    password: setPass.value
+  };
+  const res = await chrome.runtime.sendMessage({ action: "save_settings", settings });
+  if (res) {
+    fillSettings(res);
+    showSettingsStatus("Saved. These credentials are stored locally in the extension.", "ok");
+  }
+  return res;
+}
+
+async function testConnection() {
+  showSettingsStatus("Testing…");
+  const res = await chrome.runtime.sendMessage({ action: "test_connection" });
+  if (res?.success) {
+    showSettingsStatus(`Connected to ${res.url}`, "ok");
+  } else {
+    showSettingsStatus(res?.error || "Could not reach the server", "err");
+  }
+}
+
+async function detectService() {
+  showSettingsStatus("Looking for a running opencode server…");
+  const res = await chrome.runtime.sendMessage({ action: "detect_service" });
+  if (res?.success) {
+    fillSettings(res);
+    showSettingsStatus(`Found opencode at ${res.host}:${res.port} (${res.source || "detected"})`, "ok");
+    loadModels();
+  } else {
+    showSettingsStatus(res?.error || "Nothing found", "err");
+  }
+}
+
+// ------------------------------------------------------------------ popovers
+
+modelBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const willOpen = modelPopover.hidden;
+  closePopovers();
+  if (willOpen) {
+    setPopover(modelPopover, true);
+    loadModels();
+  }
+});
+
+settingsBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const willOpen = settingsPopover.hidden;
+  closePopovers();
+  if (willOpen) {
+    setPopover(settingsPopover, true);
+    loadSettings();
+  }
+});
+
+modelSearch.addEventListener("input", renderModels);
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".popover") || e.target.closest(".model-btn")) return;
+  closePopovers();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closePopovers();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    closePopovers();
+    setPopover(modelPopover, true);
+    loadModels();
+  }
+});
+
+togglePass.addEventListener("click", () => {
+  const showing = setPass.type === "text";
+  setPass.type = showing ? "password" : "text";
+  togglePass.title = showing ? "Show password" : "Hide password";
+  togglePass.setAttribute("aria-label", togglePass.title);
+});
+
+detectBtn.addEventListener("click", detectService);
+testBtn.addEventListener("click", testConnection);
+saveSettingsBtn.addEventListener("click", saveSettings);
+
+setHost.addEventListener("keydown", (e) => { if (e.key === "Enter") saveSettings(); });
+setPort.addEventListener("keydown", (e) => { if (e.key === "Enter") saveSettings(); });
+
 // ------------------------------------------------------------------ appearance
 
 function applyAppearance(solid) {
@@ -463,3 +720,12 @@ try {
 updateSendState();
 updateClearState();
 refreshSelection();
+
+loadSettings().then((settings) => {
+  if (!settings) return;
+  currentModelId = settings.modelId || "";
+  currentProviderId = settings.providerId || "";
+  syncModelLabel();
+  // Refresh the friendly model name in the background, without blocking the UI.
+  loadModels().catch(() => {});
+});
