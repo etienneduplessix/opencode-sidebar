@@ -11,9 +11,9 @@
 
 const DEFAULT_CONFIG = {
   host: "127.0.0.1",
-  port: 53213,
+  port: 49374,
   username: "opencode",
-  password: "REDACTED",
+  password: "",
   modelId: "glm-5.3-flash",
   providerId: "ollama-cloud",
   directory: ""
@@ -24,6 +24,11 @@ const REPLY_TIMEOUT_MS = 180000;
 const POLL_INTERVAL_MS = 1200;
 const PAGE_LOAD_TIMEOUT_MS = 15000;
 const ACTION_TIMEOUT_MS = 5000;
+
+// opencode's own defaults: the "latest" channel listens here, and Basic auth
+// always uses the username "opencode" with a password from the service config.
+const OPENCODE_DEFAULT_PORTS = [49374, 49375, 4096];
+const OPENCODE_MDNS_HOST = "opencode.local";
 
 // Only real web documents can be scripted. Everything else (browser UI,
 // extensions, view-source, data:, about:) is rejected up front so the
@@ -67,6 +72,204 @@ function isInjectable(url) {
   }
 }
 
+// ---------------------------------------------------------------- settings
+
+function saveSettings(patch) {
+  const clean = {};
+  if (patch && typeof patch === "object") {
+    if (typeof patch.host === "string") clean.host = patch.host.trim();
+    if (patch.port !== undefined && patch.port !== "") clean.port = Number(patch.port) || DEFAULT_CONFIG.port;
+    if (typeof patch.username === "string") clean.username = patch.username.trim() || DEFAULT_CONFIG.username;
+    if (typeof patch.password === "string") clean.password = patch.password;
+    if (typeof patch.modelId === "string") clean.modelId = patch.modelId.trim();
+    if (typeof patch.providerId === "string") clean.providerId = patch.providerId.trim();
+    if (typeof patch.directory === "string") clean.directory = patch.directory.trim();
+  }
+  return chrome.storage.local.get("opencodeConfig").then((data) => {
+    const next = { ...((data && data.opencodeConfig) || {}), ...clean };
+    return chrome.storage.local.set({ opencodeConfig: next }).then(() => ({ ...DEFAULT_CONFIG, ...next }));
+  });
+}
+
+// ---------------------------------------------------------------- models
+
+function listModels(cfg) {
+  return fetch(apiBase(cfg) + "/model", { headers: authHeaders(cfg) })
+    .then((res) => {
+      if (!res.ok) throw new Error(`Model list failed: ${res.status}`);
+      return res.json();
+    })
+    .then((data) => {
+      const models = (data && data.data) || [];
+      return models
+        .filter((m) => m && m.id && m.providerID)
+        .map((m) => ({ id: m.id, name: m.name || m.id, providerID: m.providerID }));
+    });
+}
+
+// ---------------------------------------------------------------- connection
+
+/** Pings the server with the given credentials. Resolves to { ok, error }. */
+function pingServer(cfg) {
+  return fetch(apiBase(cfg) + "/config", { headers: authHeaders(cfg) })
+    .then((res) => {
+      if (res.ok) return { ok: true };
+      if (res.status === 401) return { ok: false, error: "Wrong username or password" };
+      return { ok: false, error: `Server responded ${res.status}` };
+    })
+    .catch((e) => ({ ok: false, error: e.message }));
+}
+
+function testConnection(cfg) {
+  return pingServer(cfg).then((res) =>
+    res.ok
+      ? { success: true, url: apiBase(cfg) }
+      : { success: false, error: res.error, url: apiBase(cfg) }
+  );
+}
+
+/**
+ * Finds a working opencode server without the user filling anything in.
+ *
+ * opencode publishes its connection details in two places:
+ *   ~/.local/state/opencode/service.json  -> { url, pid, password }  (live server)
+ *   ~/.config/opencode/service.json      -> { hostname, port, password } (config)
+ *
+ * Reading those needs the extension to be granted file access, so we also try
+ * the well-known ports and the mDNS hostname with the password we already have.
+ */
+function detectService() {
+  return getConfig().then((cfg) => {
+    const candidates = [];
+
+    const addCandidate = (host, port, password, source) => {
+      const key = `${host}:${port}`;
+      if (candidates.some((c) => c.key === key && c.password === password)) return;
+      candidates.push({ key, host, port, password, source });
+    };
+
+    addCandidate(cfg.host, cfg.port, cfg.password, "current settings");
+
+    return readServiceFiles()
+      .then((found) => {
+        for (const f of found) {
+          if (f.url) {
+            try {
+              const u = new URL(f.url);
+              addCandidate(u.hostname, Number(u.port) || 80, f.password || "", f.source);
+            } catch (e) {
+              /* ignore malformed url */
+            }
+          }
+          if (f.hostname) {
+            addCandidate(f.hostname, f.port || cfg.port, f.password || "", f.source);
+          }
+        }
+        return candidates;
+      })
+      .then((list) => {
+        const extra = [];
+        for (const port of OPENCODE_DEFAULT_PORTS) {
+          extra.push({ host: "127.0.0.1", port, password: cfg.password, source: "opencode default port" });
+        }
+        extra.push({ host: OPENCODE_MDNS_HOST, port: 80, password: cfg.password, source: "mDNS" });
+        return list.concat(extra);
+      })
+      .then((list) => {
+        // Try the stored password first, then an empty one (auth may be disabled).
+        const ordered = list
+          .map((c) => ({ ...c, password: c.password || "" }))
+          .sort((a, b) => (b.password ? 1 : 0) - (a.password ? 1 : 0));
+
+        return ordered.reduce(
+          (chain, candidate) =>
+            chain.then((found) => {
+              if (found) return found;
+              const candidateCfg = {
+                host: candidate.host,
+                port: candidate.port,
+                username: cfg.username,
+                password: candidate.password
+              };
+              return pingServer(candidateCfg).then((res) =>
+                res.ok
+                  ? { success: true, ...candidate, password: candidate.password }
+                  : null
+              );
+            }),
+          Promise.resolve(null)
+        ).then((found) => {
+          if (!found) {
+            return {
+              success: false,
+              error:
+                "No opencode server found. Start one with `opencode serve`, or set a fixed port " +
+                "with `opencode service set port 53213`."
+            };
+          }
+          return saveSettings({
+            host: found.host,
+            port: found.port,
+            password: found.password,
+            username: cfg.username
+          }).then((saved) => ({ success: true, ...saved, source: found.source }));
+        });
+      })
+      .catch((e) => ({ success: false, error: e.message }));
+  });
+}
+
+/**
+ * Reads opencode's service files through file:// URLs.
+ * Requires "Allow access to file URLs" for the extension; returns [] otherwise.
+ */
+function readServiceFiles() {
+  const RELATIVE_PATHS = [
+    ".local/state/opencode/service.json",
+    ".config/opencode/service.json"
+  ];
+
+  const homeDirs = () =>
+    fetch("file:///Users/")
+      .then((res) => (res.ok ? res.text() : ""))
+      .then((html) => {
+        const dirs = [];
+        const re = /href="\/Users\/([^"/]+)\/"/g;
+        let m;
+        while ((m = re.exec(html)) !== null) {
+          if (m[1] !== "Shared" && m[1] !== ".localized") dirs.push(`/Users/${m[1]}`);
+        }
+        return dirs;
+      })
+      .catch(() => []);
+
+  return homeDirs()
+    .then((dirs) =>
+      Promise.all(
+        dirs.flatMap((dir) =>
+          RELATIVE_PATHS.map((rel) => {
+            const url = `file://${dir}/${rel}`;
+            return fetch(url)
+              .then((res) => (res.ok ? res.json() : null))
+              .then((data) => {
+                if (!data || typeof data !== "object") return null;
+                return {
+                  source: rel,
+                  url: typeof data.url === "string" ? data.url : "",
+                  password: typeof data.password === "string" ? data.password : "",
+                  hostname: typeof data.hostname === "string" ? data.hostname : "",
+                  port: typeof data.port === "number" ? data.port : 0
+                };
+              })
+              .catch(() => null);
+          })
+        )
+      )
+    )
+    .then((results) => results.filter(Boolean))
+    .catch(() => []);
+}
+
 // ---------------------------------------------------------------- messaging
 
 chrome.action.onClicked.addListener(() => {
@@ -103,6 +306,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "page_action":
       runPageActions(message.actions).then(sendResponse);
+      return true;
+
+    case "get_settings":
+      getConfig().then(sendResponse);
+      return true;
+
+    case "save_settings":
+      saveSettings(message.settings).then(sendResponse);
+      return true;
+
+    case "list_models":
+      getConfig()
+        .then((cfg) => listModels(cfg))
+        .then((models) => sendResponse({ success: true, models }))
+        .catch((e) => sendResponse({ success: false, error: e.message }));
+      return true;
+
+    case "test_connection":
+      getConfig()
+        .then((cfg) => testConnection(cfg))
+        .then(sendResponse);
+      return true;
+
+    case "detect_service":
+      detectService().then(sendResponse);
       return true;
 
     default:
