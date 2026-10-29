@@ -848,6 +848,7 @@
     /* ============================================================ composer */
     #composer {
       flex: 0 0 auto;
+      position: relative;
       background: var(--glass);
       -webkit-backdrop-filter: var(--blur);
       backdrop-filter: var(--blur);
@@ -868,7 +869,7 @@
       align-items: center;
       gap: 6px;
       height: 28px;
-      padding: 0 9px;
+      padding: 0 4px 0 9px;
       flex: 1;
       min-width: 0;
       border-radius: 9px;
@@ -883,7 +884,6 @@
       box-shadow: var(--focus-ring);
     }
     #directory-bar svg { width: 12px; height: 12px; color: var(--text-3); flex: 0 0 auto; }
-
     #directory-input {
       flex: 1;
       min-width: 0;
@@ -893,6 +893,140 @@
       color: var(--text);
     }
     #directory-input::placeholder { color: var(--text-3); }
+
+    .dir-browse {
+      width: 22px;
+      height: 22px;
+      flex: 0 0 auto;
+      border: none;
+      background: transparent;
+      color: var(--text-3);
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .dir-browse:hover { background: var(--hairline-2); color: var(--text); }
+    .dir-browse svg { width: 12px; height: 12px; }
+
+    /* ============================================================ folder picker */
+    #folder-popover {
+      left: 12px;
+      right: 12px;
+      bottom: calc(100% + 8px);
+      max-height: 380px;
+    }
+
+    .dir-crumbs {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-3);
+    }
+    .dir-crumbs button {
+      border: none;
+      background: transparent;
+      color: var(--text-2);
+      font-size: 11px;
+      padding: 2px 4px;
+      border-radius: 5px;
+      cursor: pointer;
+      max-width: 130px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dir-crumbs button:hover { background: var(--hairline-2); color: var(--text); }
+    .dir-crumbs .sep { color: var(--text-3); opacity: 0.6; }
+
+    .dir-list {
+      overflow-y: auto;
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-height: 90px;
+      max-height: 230px;
+    }
+    .dir-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 8px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 12.5px;
+      color: var(--text);
+      transition: background 0.12s;
+    }
+    .dir-item:hover { background: var(--hairline-2); }
+    .dir-item svg { width: 13px; height: 13px; color: var(--text-3); flex: 0 0 auto; }
+    .dir-item .d-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: 52%;
+    }
+    .dir-item .d-path {
+      font-size: 10px;
+      color: var(--text-3);
+      font-family: var(--mono);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1 1 0;
+      min-width: 0;
+      direction: rtl;
+      text-align: left;
+    }
+    .dir-item .go {
+      margin-left: auto;
+      color: var(--text-3);
+      opacity: 0;
+      transition: opacity 0.12s;
+      flex: 0 0 auto;
+    }
+    .dir-item:hover .go { opacity: 1; }
+
+    .dir-group {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      padding: 8px 8px 3px;
+    }
+
+    .dir-empty {
+      padding: 18px 10px;
+      text-align: center;
+      font-size: 11.5px;
+      color: var(--text-3);
+      line-height: 1.5;
+    }
+    .dir-empty code {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 10px;
+      background: var(--hairline-2);
+      border-radius: 5px;
+      padding: 3px 6px;
+      margin-top: 6px;
+      user-select: all;
+    }
+
+    .dir-recent {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 0.5px solid var(--hairline-2);
+    }
+    .dir-recent .popover-title { margin: 0 0 4px; }
 
     #input-area {
       display: flex;
@@ -1137,6 +1271,11 @@
         <input type="text" id="directory-input" placeholder="Project folder (optional)"
                aria-label="Project folder OpenCode should work in"
                title="Folder OpenCode should work in — e.g. ~/Developement/perso/myproject" />
+        <button id="dir-browse" class="dir-browse" title="Browse folders" aria-label="Browse project folders" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </button>
       </div>
       <button id="model-btn" class="model-btn" title="Choose a model" aria-haspopup="true" aria-expanded="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
@@ -1155,6 +1294,21 @@
           <path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>
         </svg>
       </button>
+    </div>
+
+    <div id="folder-popover" class="popover" hidden>
+      <div class="popover-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+        </svg>
+        <input type="text" id="dir-search" placeholder="Search folders…" aria-label="Search folders" spellcheck="false" />
+      </div>
+      <div id="dir-crumbs" class="dir-crumbs"></div>
+      <div id="dir-list" class="dir-list"></div>
+      <div class="save-row">
+        <button id="dir-cancel" class="btn">Cancel</button>
+        <button id="dir-use" class="btn primary">Use this folder</button>
+      </div>
     </div>
 
     <div id="model-popover" class="popover" hidden>
