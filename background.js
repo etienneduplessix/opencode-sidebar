@@ -9,424 +9,515 @@
 // Assistant message: { type: "assistant", content: [{ type: "text", text }], finish }
 // Auth is HTTP Basic (username/password), not Bearer.
 
-var DEFAULT_CONFIG = {
+const DEFAULT_CONFIG = {
   host: "127.0.0.1",
   port: 53213,
   username: "opencode",
   password: "REDACTED",
   modelId: "glm-5.3-flash",
   providerId: "ollama-cloud",
-  directory: "/home/user/project"
+  directory: ""
 };
 
-var PAGE_TEXT_LIMIT = 12000;
-var REPLY_TIMEOUT_MS = 180000;
-var POLL_INTERVAL_MS = 1200;
+const PAGE_TEXT_LIMIT = 12000;
+const REPLY_TIMEOUT_MS = 180000;
+const POLL_INTERVAL_MS = 1200;
+const PAGE_LOAD_TIMEOUT_MS = 15000;
+const ACTION_TIMEOUT_MS = 5000;
+
+// Only real web documents can be scripted. Everything else (browser UI,
+// extensions, view-source, data:, about:) is rejected up front so the
+// side panel shows a clear reason instead of a raw injection error.
+const INJECTABLE_PROTOCOLS = ["http:", "https:", "file:"];
+
+// ---------------------------------------------------------------- config
 
 function getConfig() {
-  return chrome.storage.local.get("opencodeConfig").then(function (data) {
-    return Object.assign({}, DEFAULT_CONFIG, (data && data.opencodeConfig) || {});
-  });
+  return chrome.storage.local.get("opencodeConfig").then((data) => ({
+    ...DEFAULT_CONFIG,
+    ...((data && data.opencodeConfig) || {})
+  }));
 }
 
 function apiBase(cfg) {
-  return "http://" + cfg.host + ":" + cfg.port + "/api";
+  return `http://${cfg.host}:${cfg.port}/api`;
 }
 
 function basicAuth(cfg) {
-  var raw = cfg.username + ":" + cfg.password;
-  try {
-    return btoa(raw);
-  } catch (e) {
-    return btoa(unescape(encodeURIComponent(raw)));
-  }
+  const raw = `${cfg.username}:${cfg.password}`;
+  const bytes = new TextEncoder().encode(raw);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 function authHeaders(cfg) {
   return {
     "Content-Type": "application/json",
-    "Authorization": "Basic " + basicAuth(cfg)
+    Authorization: `Basic ${basicAuth(cfg)}`
   };
 }
 
 function isInjectable(url) {
   if (!url) return false;
-  return (
-    url.indexOf("chrome://") !== 0 &&
-    url.indexOf("chrome-extension://") !== 0 &&
-    url.indexOf("chrome-untrusted://") !== 0 &&
-    url.indexOf("devtools://") !== 0 &&
-    url.indexOf("about:") !== 0 &&
-    url.indexOf("edge://") !== 0 &&
-    url.indexOf("view-source:") !== 0
-  );
+  try {
+    return INJECTABLE_PROTOCOLS.includes(new URL(url).protocol);
+  } catch (e) {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------- messaging
 
-chrome.action.onClicked.addListener(function () {
+chrome.action.onClicked.addListener(() => {
   chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
 });
 
-chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== "object") return;
 
-  if (message.action === "selection.changed" && sender.tab) {
-    chrome.runtime.sendMessage({ action: "selection.changed", text: message.text, url: sender.tab.url }).catch(function () {});
-    return;
-  }
-  if (message.action === "selection.cleared") {
-    chrome.runtime.sendMessage({ action: "selection.cleared" }).catch(function () {});
-    return;
-  }
-  if (message.action === "chat_with_opencode") {
-    chatWithOpenCode(message.prompt, message.context, message.directory, message.page).then(sendResponse);
-    return true;
-  }
-  if (message.action === "get_selection") {
-    getSelection().then(sendResponse);
-    return true;
-  }
-  if (message.action === "get_page") {
-    getPage().then(sendResponse);
-    return true;
-  }
-  if (message.action === "page_action") {
-    runPageActions(message.actions).then(sendResponse);
-    return true;
+  switch (message.action) {
+    case "selection.changed":
+      if (sender.tab) {
+        chrome.runtime
+          .sendMessage({ action: "selection.changed", text: message.text, url: sender.tab.url })
+          .catch(() => {});
+      }
+      return;
+
+    case "selection.cleared":
+      chrome.runtime.sendMessage({ action: "selection.cleared" }).catch(() => {});
+      return;
+
+    case "chat_with_opencode":
+      chatWithOpenCode(message.prompt, message.context, message.directory, message.page).then(sendResponse);
+      return true;
+
+    case "get_selection":
+      readSelection().then(sendResponse);
+      return true;
+
+    case "get_page":
+      getPage().then(sendResponse);
+      return true;
+
+    case "page_action":
+      runPageActions(message.actions).then(sendResponse);
+      return true;
+
+    default:
   }
 });
 
-// ---------------------------------------------------------------- selection
+// ---------------------------------------------------------------- tab helpers
 
 function getActiveTab() {
-  return chrome.tabs.query({ active: true, currentWindow: true }).then(function (tabs) {
-    return tabs[0] || null;
+  return chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => tabs[0] || null);
+}
+
+/**
+ * Runs `handler` against the active tab, rejecting browser pages up front.
+ * Every handler resolves to a plain result object — never rejects.
+ */
+function withActiveTab(handler, failureMessage) {
+  return getActiveTab().then((tab) => {
+    if (!tab || !tab.id) return { success: false, error: "No active tab" };
+    if (!isInjectable(tab.url)) return { success: false, error: failureMessage };
+    return handler(tab);
   });
 }
 
-function getSelection() {
-  return getActiveTab().then(function (tab) {
-    if (!tab || !tab.id) return { success: false, error: "No active tab" };
-    if (!isInjectable(tab.url)) return { success: false, error: "Cannot access browser pages" };
-    return chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: function () {
-        var sel = window.getSelection();
-        return sel ? sel.toString() : "";
-      }
-    }).then(function (results) {
-      return { success: true, text: results[0] ? results[0].result : "", url: tab.url, title: tab.title };
-    }).catch(function (e) {
-      return { success: false, error: e.message };
-    });
+/** Executes `func` in `tab` and unwraps the first result. */
+function executeInTab(tab, func, args) {
+  return chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func,
+    args: args || []
+  }).then((results) => {
+    const result = results[0] && results[0].result;
+    if (result === undefined || result === null) throw new Error("No result from page");
+    return result;
   });
+}
+
+// ---------------------------------------------------------------- selection
+
+function readSelection() {
+  return withActiveTab(
+    (tab) =>
+      executeInTab(tab, () => {
+        const sel = window.getSelection();
+        return sel ? sel.toString() : "";
+      })
+        .then((text) => ({ success: true, text, url: tab.url, title: tab.title }))
+        .catch((e) => ({ success: false, error: e.message })),
+    "Cannot access browser pages"
+  );
 }
 
 // ---------------------------------------------------------------- page read
 
 function getPage() {
-  return getActiveTab().then(function (tab) {
-    if (!tab || !tab.id) return { success: false, error: "No active tab" };
-    if (!isInjectable(tab.url)) return { success: false, error: "Cannot read browser pages" };
-    return chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: function (limit) {
-        var body = document.body;
-        var text = (body && (body.innerText || body.textContent)) || "";
+  return withActiveTab(
+    (tab) =>
+      executeInTab(
+        tab,
+        (limit) => {
+          const body = document.body;
+          const text = (body && (body.innerText || body.textContent)) || "";
 
-        var links = [];
-        var anchors = document.querySelectorAll("a[href]");
-        for (var i = 0; i < anchors.length && links.length < 120; i++) {
-          var a = anchors[i];
-          var label = (a.innerText || a.textContent || a.getAttribute("aria-label") || "").trim();
-          var href = a.href || "";
-          if (!href || href.indexOf("javascript:") === 0) continue;
-          links.push({ text: label.slice(0, 120), href: href.slice(0, 400) });
-        }
-
-        var fields = [];
-        var inputs = document.querySelectorAll("input, textarea, select");
-        for (var j = 0; j < inputs.length && fields.length < 120; j++) {
-          var el = inputs[j];
-          var id = el.id || "";
-          var name = el.getAttribute("name") || "";
-          var labelText = "";
-          if (id) {
-            var lab = document.querySelector('label[for="' + CSS.escape(id) + '"]');
-            if (lab) labelText = (lab.innerText || "").trim();
+          const links = [];
+          const anchors = document.querySelectorAll("a[href]");
+          for (let i = 0; i < anchors.length && links.length < 120; i++) {
+            const a = anchors[i];
+            const label = (a.innerText || a.textContent || a.getAttribute("aria-label") || "").trim();
+            const href = a.href || "";
+            if (!href || href.indexOf("javascript:") === 0) continue;
+            links.push({ text: label.slice(0, 120), href: href.slice(0, 400) });
           }
-          if (!labelText) labelText = (el.getAttribute("placeholder") || el.getAttribute("aria-label") || "").trim();
-          fields.push({
-            tag: el.tagName.toLowerCase(),
-            type: (el.getAttribute("type") || el.tagName.toLowerCase()).toLowerCase(),
-            name: name || id,
-            label: labelText.slice(0, 120),
-            required: !!el.required,
-            value: el.type === "password" ? "" : String(el.value || "").slice(0, 200)
-          });
-        }
 
-        return {
-          title: document.title || "",
-          url: location.href,
-          text: text.slice(0, limit),
-          textLength: text.length,
-          links: links,
-          fields: fields
-        };
-      },
-      args: [PAGE_TEXT_LIMIT]
-    }).then(function (results) {
-      var result = results[0] && results[0].result;
-      if (!result) return { success: false, error: "Could not read page" };
-      return { success: true, result: result };
-    }).catch(function (e) {
-      return { success: false, error: e.message };
-    });
-  });
+          const fields = [];
+          const inputs = document.querySelectorAll("input, textarea, select");
+          for (let j = 0; j < inputs.length && fields.length < 120; j++) {
+            const el = inputs[j];
+            const id = el.id || "";
+            const name = el.getAttribute("name") || "";
+            let labelText = "";
+            if (id) {
+              const lab = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+              if (lab) labelText = (lab.innerText || "").trim();
+            }
+            if (!labelText) {
+              labelText = (el.getAttribute("placeholder") || el.getAttribute("aria-label") || "").trim();
+            }
+            fields.push({
+              tag: el.tagName.toLowerCase(),
+              type: (el.getAttribute("type") || el.tagName.toLowerCase()).toLowerCase(),
+              name: name || id,
+              label: labelText.slice(0, 120),
+              required: !!el.required,
+              value: el.type === "password" ? "" : String(el.value || "").slice(0, 200)
+            });
+          }
+
+          return {
+            title: document.title || "",
+            url: location.href,
+            text: text.slice(0, limit),
+            textLength: text.length,
+            links,
+            fields
+          };
+        },
+        [PAGE_TEXT_LIMIT]
+      )
+        .then((result) => ({ success: true, result }))
+        .catch((e) => ({ success: false, error: e.message })),
+    "Cannot read browser pages"
+  );
 }
 
 // ---------------------------------------------------------------- page actions
 
 function runPageActions(actions) {
-  var list = Array.isArray(actions) ? actions : [];
-  return getActiveTab().then(function (tab) {
-    if (!tab || !tab.id) return { success: false, error: "No active tab" };
-    if (!isInjectable(tab.url)) return { success: false, error: "Cannot act on browser pages" };
+  const list = Array.isArray(actions) ? actions : [];
 
-    var results = [];
+  return withActiveTab(
+    (tab) => {
+      const results = [];
 
-    function step(i) {
-      if (i >= list.length) return Promise.resolve();
-      var action = list[i] || {};
-      return runOneAction(tab, action).then(function (res) {
-        res.index = i;
-        res.type = action.type || "";
-        results.push(res);
-        return step(i + 1);
-      }).catch(function (e) {
-        results.push({ index: i, type: action.type || "", ok: false, error: e.message });
-        return step(i + 1);
-      });
-    }
+      const step = (i) => {
+        if (i >= list.length) return Promise.resolve();
+        const action = list[i] || {};
+        return runOneAction(tab, action)
+          .then((res) => {
+            results.push({ ...res, index: i, type: action.type || "" });
+          })
+          .catch((e) => {
+            results.push({ ok: false, error: e.message, index: i, type: action.type || "" });
+          })
+          .then(() => step(i + 1));
+      };
 
-    return step(0).then(function () {
-      return getActiveTab().then(function (t) {
-        return { success: true, results: { url: (t && t.url) || tab.url, results: results } };
-      });
-    });
-  });
+      return step(0).then(() =>
+        getActiveTab().then((t) => ({
+          success: true,
+          results: { url: (t && t.url) || tab.url, results }
+        }))
+      );
+    },
+    "Cannot act on browser pages"
+  );
 }
 
-function runOneAction(tab, action) {
-  var type = (action.type || "").toLowerCase();
-  var value = action.value != null ? action.value : action.text;
-  var selector = action.selector || (typeof value === "string" ? value : "");
+/** Action handlers. Each returns a promise resolving to { ok, text } or { ok: false, error }. */
+const ACTION_HANDLERS = {
+  navigate(tab, action) {
+    const raw = String(action.value != null ? action.value : action.text || "").trim();
+    if (!raw) return Promise.resolve({ ok: false, error: "No URL" });
+    const url = raw.indexOf("http") === 0 ? raw : `https://${raw}`;
+    return chrome.tabs
+      .update(tab.id, { url })
+      .then(() => waitForLoad(tab.id).then(() => ({ ok: true, text: `Navigated to ${url}` })))
+      .catch((e) => ({ ok: false, error: e.message }));
+  },
 
-  if (type === "navigate") {
-    var url = String(value || "").trim();
-    if (!url) return Promise.resolve({ ok: false, error: "No URL" });
-    if (url.indexOf("http") !== 0) url = "https://" + url;
-    return chrome.tabs.update(tab.id, { url: url }).then(function () {
-      return waitForLoad(tab.id).then(function () {
-        return { ok: true, text: "Navigated to " + url };
-      });
-    }).catch(function (e) {
-      return { ok: false, error: e.message };
-    });
-  }
-
-  if (type === "read" || type === "extract") {
-    return inject(tab, function (sel) {
-      var target = sel ? document.querySelector(sel) : document.body;
-      if (!target) return { ok: false, error: "Element not found: " + sel };
-      var text = (target.innerText || target.textContent || "").trim();
+  read: (tab, action) =>
+    injectAction(tab, (sel) => {
+      let target = document.body;
+      if (sel) {
+        try {
+          target = document.querySelector(sel);
+        } catch (e) {
+          return { ok: false, error: `Invalid selector: ${sel}` };
+        }
+        if (!target) return { ok: false, error: `Element not found: ${sel}` };
+      }
+      const text = (target.innerText || target.textContent || "").trim();
       return { ok: true, text: text.slice(0, 4000) };
-    }, [selector]);
-  }
+    }, [selectorFor(action)]),
 
-  if (type === "click") {
-    return inject(tab, function (sel, label) {
-      var el = sel ? document.querySelector(sel) : null;
-      if (!el && label) {
-        var candidates = document.querySelectorAll("a, button, [role='button'], input[type='submit']");
-        for (var i = 0; i < candidates.length; i++) {
-          var t = (candidates[i].innerText || candidates[i].value || "").trim();
-          if (t === label || t.toLowerCase() === String(label).toLowerCase()) { el = candidates[i]; break; }
+  click: (tab, action) =>
+    injectAction(tab, (sel, label) => {
+      let el = null;
+      if (sel) {
+        try {
+          el = document.querySelector(sel);
+        } catch (e) {
+          return { ok: false, error: `Invalid selector: ${sel}` };
         }
       }
-      if (!el) return { ok: false, error: "Click target not found: " + (sel || label) };
+      if (!el && label) {
+        const candidates = document.querySelectorAll("a, button, [role='button'], input[type='submit']");
+        for (const candidate of candidates) {
+          const text = (candidate.innerText || candidate.value || "").trim();
+          if (text === label || text.toLowerCase() === String(label).toLowerCase()) {
+            el = candidate;
+            break;
+          }
+        }
+      }
+      if (!el) return { ok: false, error: `Click target not found: ${sel || label}` };
       el.scrollIntoView({ block: "center" });
       el.click();
-      return { ok: true, text: "Clicked " + ((el.innerText || el.value || sel || "").trim().slice(0, 80)) };
-    }, [selector, typeof value === "string" ? value : ""]);
-  }
+      return { ok: true, text: `Clicked ${(el.innerText || el.value || sel || "").trim().slice(0, 80)}` };
+    }, [selectorFor(action), labelFor(action)]),
 
-  if (type === "fill" || type === "type" || type === "input") {
-    return inject(tab, function (sel, val) {
-      var el = sel ? document.querySelector(sel) : null;
-      if (!el) return { ok: false, error: "Field not found: " + sel };
+  fill: (tab, action) =>
+    injectAction(tab, (sel, val) => {
+      let el = null;
+      try {
+        el = sel ? document.querySelector(sel) : null;
+      } catch (e) {
+        return { ok: false, error: `Invalid selector: ${sel}` };
+      }
+      if (!el) return { ok: false, error: `Field not found: ${sel}` };
       el.focus();
       el.value = val;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
-      return { ok: true, text: "Filled " + (sel || "") };
-    }, [selector, action.text != null && action.value != null ? action.text : String(value || "")]);
-  }
+      return { ok: true, text: `Filled ${sel || ""}` };
+    }, [selectorFor(action), valueFor(action)]),
 
-  if (type === "scroll") {
-    return inject(tab, function (sel, amount) {
+  scroll: (tab, action) =>
+    injectAction(tab, (sel, amount) => {
       if (sel) {
-        var el = document.querySelector(sel);
-        if (!el) return { ok: false, error: "Element not found: " + sel };
+        let el = null;
+        try {
+          el = document.querySelector(sel);
+        } catch (e) {
+          return { ok: false, error: `Invalid selector: ${sel}` };
+        }
+        if (!el) return { ok: false, error: `Element not found: ${sel}` };
         el.scrollIntoView({ block: "center" });
-        return { ok: true, text: "Scrolled to " + sel };
+        return { ok: true, text: `Scrolled to ${sel}` };
       }
-      window.scrollBy(0, Number(amount) || 600);
-      return { ok: true, text: "Scrolled " + (Number(amount) || 600) + "px" };
-    }, [selector, action.amount || 600]);
-  }
+      const dy = Number(amount) || 600;
+      window.scrollBy(0, dy);
+      return { ok: true, text: `Scrolled ${dy}px` };
+    }, [selectorFor(action), action.amount || 600]),
 
-  if (type === "wait") {
-    return inject(tab, function (sel, timeout) {
-      var deadline = Date.now() + (Number(timeout) || 5000);
-      while (Date.now() < deadline) {
-        if (!sel || document.querySelector(sel)) return { ok: true, text: "Ready: " + (sel || "page") };
-        var start = Date.now();
-        while (Date.now() - start < 100) { /* spin briefly, bounded by the deadline */ }
-      }
-      return { ok: false, error: "Timed out waiting for " + (sel || "page") };
-    }, [selector, action.timeout || 5000]);
-  }
+  wait: (tab, action) =>
+    injectAction(
+      tab,
+      // NOTE: injected functions are serialised into the page — they cannot
+      // reference anything outside their own arguments. Keep literals here.
+      async (sel, timeout) => {
+        const limit = Number(timeout);
+        const deadline = Date.now() + (limit > 0 ? limit : 5000);
+        for (let i = 0; i < 600 && Date.now() < deadline; i++) {
+          if (!sel) return { ok: true, text: "Ready: page" };
+          let found = false;
+          try {
+            found = !!document.querySelector(sel);
+          } catch (e) {
+            return { ok: false, error: `Invalid selector: ${sel}` };
+          }
+          if (found) return { ok: true, text: `Ready: ${sel}` };
+          // Yield instead of spinning — a busy loop would freeze the tab.
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return { ok: false, error: `Timed out waiting for ${sel || "page"}` };
+      },
+      [selectorFor(action), action.timeout || ACTION_TIMEOUT_MS]
+    )
+};
 
-  return Promise.resolve({ ok: false, error: "Unknown action type: " + (action.type || "(none)") });
+// Aliases kept for backwards compatibility with older action payloads.
+ACTION_HANDLERS.extract = ACTION_HANDLERS.read;
+ACTION_HANDLERS.type = ACTION_HANDLERS.fill;
+ACTION_HANDLERS.input = ACTION_HANDLERS.fill;
+
+function selectorFor(action) {
+  return action.selector || "";
 }
 
-function inject(tab, func, args) {
-  return chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: func,
-    args: args || []
-  }).then(function (results) {
-    var r = results[0] && results[0].result;
-    if (!r) return { ok: false, error: "No result" };
-    return r;
-  }).catch(function (e) {
-    return { ok: false, error: e.message };
-  });
+/** The label a click should target ("label" per the action schema). */
+function labelFor(action) {
+  if (action.label != null) return String(action.label);
+  const value = action.value != null ? action.value : action.text;
+  return typeof value === "string" ? value : "";
+}
+
+/** The text a field action should write. */
+function valueFor(action) {
+  if (action.value != null) return String(action.value);
+  if (action.text != null) return String(action.text);
+  return "";
+}
+
+function runOneAction(tab, action) {
+  const type = String(action.type || "").toLowerCase();
+  const handler = ACTION_HANDLERS[type];
+  if (!handler) {
+    return Promise.resolve({ ok: false, error: `Unknown action type: ${action.type || "(none)"}` });
+  }
+  return handler(tab, action);
+}
+
+/** Injects an action into the page and normalises failures to { ok: false, error }. */
+function injectAction(tab, func, args) {
+  return executeInTab(tab, func, args).catch((e) => ({ ok: false, error: e.message }));
 }
 
 function waitForLoad(tabId) {
-  return new Promise(function (resolve) {
-    var done = false;
-    function finish() {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
       if (done) return;
       done = true;
-      try { chrome.tabs.onUpdated.removeListener(listener); } catch (e) { /* already gone */ }
+      try {
+        chrome.tabs.onUpdated.removeListener(listener);
+      } catch (e) {
+        /* listener already gone */
+      }
       resolve();
-    }
-    function listener(id, info) {
+    };
+    const listener = (id, info) => {
       if (id === tabId && info.status === "complete") finish();
-    }
+    };
     chrome.tabs.onUpdated.addListener(listener);
-    setTimeout(finish, 15000);
+    setTimeout(finish, PAGE_LOAD_TIMEOUT_MS);
   });
 }
 
 // ---------------------------------------------------------------- chat (v2)
 
 function chatWithOpenCode(prompt, context, directory, pageText) {
-  return getConfig().then(function (cfg) {
-    var dir = (directory || "").trim() || cfg.directory;
+  return getConfig()
+    .then((cfg) => {
+      const dir = (directory || "").trim() || (cfg.directory || "").trim();
 
-    var fullPrompt = prompt || "";
-    if (context) fullPrompt += "\n\n[Selected text]\n" + context;
-    if (pageText) fullPrompt += "\n\n[Page content]\n" + pageText;
+      let fullPrompt = prompt || "";
+      if (context) fullPrompt += `\n\n[Selected text]\n${context}`;
+      if (pageText) fullPrompt += `\n\n[Page content]\n${pageText}`;
 
-    return getActiveTab().then(function (tab) {
-      if (tab && tab.url && isInjectable(tab.url)) {
-        fullPrompt += "\n\n[Browser] Active tab: \"" + (tab.title || "") + "\" | " + tab.url;
-      }
+      return getActiveTab().then((tab) => {
+        if (tab && tab.url && isInjectable(tab.url)) {
+          fullPrompt += `\n\n[Browser] Active tab: "${tab.title || ""}" | ${tab.url}`;
+        }
 
-      return ensureSession(cfg, dir).then(function (sessionId) {
-        return setModel(cfg, sessionId).then(function () {
-          var anchor = Date.now() - 2000;
-          return postPrompt(cfg, sessionId, fullPrompt).then(function () {
-            return waitForReply(cfg, sessionId, anchor);
-          });
-        });
+        return ensureSession(cfg, dir)
+          .then((sessionId) =>
+            setModel(cfg, sessionId)
+              .then(() => postPrompt(cfg, sessionId, fullPrompt))
+              .then(() => waitForReply(cfg, sessionId, Date.now() - 2000))
+          );
       });
-    });
-  }).then(function (text) {
-    if (!text) return { success: false, error: "No reply from OpenCode (timed out)" };
-    return { success: true, response: text };
-  }).catch(function (e) {
-    return { success: false, error: e.message };
-  });
+    })
+    .then((text) => {
+      if (!text) return { success: false, error: "No reply from OpenCode (timed out)" };
+      return { success: true, response: text };
+    })
+    .catch((e) => ({ success: false, error: e.message }));
 }
 
 function sessionKey(directory) {
-  return "opencodeSessionId:" + directory;
+  return `opencodeSessionId:${directory}`;
 }
 
 function ensureSession(cfg, directory) {
-  var key = sessionKey(directory);
-  return chrome.storage.session.get(key).then(function (data) {
-    var existing = data && data[key];
+  const key = sessionKey(directory);
+  return chrome.storage.session.get(key).then((data) => {
+    const existing = data && data[key];
     if (!existing) return createSession(cfg, directory);
-    return fetch(apiBase(cfg) + "/session/" + existing, { headers: authHeaders(cfg) })
-      .then(function (res) { return res.ok ? existing : null; })
-      .catch(function () { return null; })
-      .then(function (valid) {
-        return valid || createSession(cfg, directory);
-      });
+    return fetch(`${apiBase(cfg)}/session/${existing}`, { headers: authHeaders(cfg) })
+      .then((res) => (res.ok ? existing : null))
+      .catch(() => null)
+      .then((valid) => valid || createSession(cfg, directory));
   });
 }
 
 function createSession(cfg, directory) {
-  return fetch(apiBase(cfg) + "/session", {
+  // Without a directory the server falls back to its own working directory.
+  const body = directory ? { location: { directory } } : {};
+
+  return fetch(`${apiBase(cfg)}/session`, {
     method: "POST",
     headers: authHeaders(cfg),
-    body: JSON.stringify({ location: { directory: directory } })
-  }).then(function (res) {
-    if (!res.ok) throw new Error("Create session failed: " + res.status + " " + res.statusText);
-    return res.json();
-  }).then(function (data) {
-    var id = data && data.data && data.data.id;
-    if (!id) throw new Error("Unexpected session response: " + JSON.stringify(data).slice(0, 200));
-    var payload = {};
-    payload[sessionKey(directory)] = id;
-    return chrome.storage.session.set(payload).then(function () { return id; });
-  });
+    body: JSON.stringify(body)
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`Create session failed: ${res.status} ${res.statusText}`);
+      return res.json();
+    })
+    .then((data) => {
+      const id = data && data.data && data.data.id;
+      if (!id) throw new Error(`Unexpected session response: ${JSON.stringify(data).slice(0, 200)}`);
+      return chrome.storage.session.set({ [sessionKey(directory)]: id }).then(() => id);
+    });
 }
 
 function setModel(cfg, sessionId) {
-  return fetch(apiBase(cfg) + "/session/" + sessionId + "/model", {
+  return fetch(`${apiBase(cfg)}/session/${sessionId}/model`, {
     method: "POST",
     headers: authHeaders(cfg),
     body: JSON.stringify({ model: { id: cfg.modelId, providerID: cfg.providerId } })
-  }).then(function (res) {
-    if (!res.ok) throw new Error("Set model failed: " + res.status);
-    return true;
-  }).catch(function () {
-    return false; // keep the session's existing model if this one is rejected
-  });
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`Set model failed: ${res.status}`);
+      return true;
+    })
+    .catch((e) => {
+      // Keep the session's existing model if this one is rejected.
+      console.warn("[opencode-sidebar] could not set model:", e.message);
+      return false;
+    });
 }
 
 function postPrompt(cfg, sessionId, text) {
-  return fetch(apiBase(cfg) + "/session/" + sessionId + "/prompt", {
+  return fetch(`${apiBase(cfg)}/session/${sessionId}/prompt`, {
     method: "POST",
     headers: authHeaders(cfg),
-    body: JSON.stringify({ text: text })
-  }).then(function (res) {
+    body: JSON.stringify({ text })
+  }).then((res) => {
     if (!res.ok) {
-      return res.text().then(function (body) {
+      return res.text().then((body) => {
         if (body.indexOf("LocationNotFoundError") !== -1) {
-          var match = body.match(/"directory":"([^"]+)"/);
-          throw new Error("Project folder not found: " + (match ? match[1] : "unknown"));
+          const match = body.match(/"directory":"([^"]+)"/);
+          throw new Error(`Project folder not found: ${match ? match[1] : "unknown"}`);
         }
-        throw new Error("Send prompt failed: " + res.status + " " + body.slice(0, 200));
+        throw new Error(`Send prompt failed: ${res.status} ${body.slice(0, 200)}`);
       });
     }
     return res.json();
@@ -434,19 +525,18 @@ function postPrompt(cfg, sessionId, text) {
 }
 
 function waitForReply(cfg, sessionId, anchor) {
-  var deadline = Date.now() + REPLY_TIMEOUT_MS;
+  const deadline = Date.now() + REPLY_TIMEOUT_MS;
 
-  function poll() {
-    return fetch(apiBase(cfg) + "/session/" + sessionId + "/message", { headers: authHeaders(cfg) })
-      .then(function (res) {
-        if (!res.ok) throw new Error("Read messages failed: " + res.status);
+  const poll = () =>
+    fetch(`${apiBase(cfg)}/session/${sessionId}/message`, { headers: authHeaders(cfg) })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Read messages failed: ${res.status}`);
         return res.json();
       })
-      .then(function (data) {
-        var messages = (data && data.data) || [];
-        var latest = null;
-        for (var i = 0; i < messages.length; i++) {
-          var m = messages[i];
+      .then((data) => {
+        const messages = (data && data.data) || [];
+        let latest = null;
+        for (const m of messages) {
           if (!m || m.type !== "assistant") continue;
           if (m.time && m.time.created && m.time.created < anchor) continue;
           if (!latest || (m.time && m.time.created) > (latest.time && latest.time.created)) latest = m;
@@ -454,29 +544,26 @@ function waitForReply(cfg, sessionId, anchor) {
 
         if (latest) {
           if (latest.error) {
-            throw new Error("OpenCode error: " + (latest.error.message || JSON.stringify(latest.error)).slice(0, 200));
+            throw new Error(
+              `OpenCode error: ${(latest.error.message || JSON.stringify(latest.error)).slice(0, 200)}`
+            );
           }
-          var text = extractText(latest);
-          var finished = !!latest.finish;
+          const text = extractText(latest);
+          const finished = !!latest.finish;
           // "tool-calls" means the agent is still working — it will emit another message.
           if (finished && latest.finish !== "tool-calls" && text) return text;
         }
 
         if (Date.now() > deadline) return "";
-        return new Promise(function (resolve) {
-          setTimeout(resolve, POLL_INTERVAL_MS);
-        }).then(poll);
+        return new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS)).then(poll);
       });
-  }
 
   return poll();
 }
 
 function extractText(message) {
-  var out = "";
-  var content = message.content || [];
-  for (var i = 0; i < content.length; i++) {
-    var part = content[i];
+  let out = "";
+  for (const part of message.content || []) {
     if (part && part.type === "text" && part.text) out += part.text;
   }
   return out.trim();
