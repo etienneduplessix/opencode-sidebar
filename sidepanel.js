@@ -377,25 +377,26 @@ async function applyToPage(replacement) {
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: function (original, repl) {
-      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      var node;
+      // Serialised into the page: no closure variables allowed in here.
+      let walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node;
       while ((node = walker.next())) {
-        var text = node.textContent;
-        var idx = text.indexOf(original);
+        const text = node.textContent;
+        const idx = text.indexOf(original);
         if (idx !== -1) {
           node.textContent = text.substring(0, idx) + repl + text.substring(idx + original.length);
           return { success: true };
         }
       }
-      var normalized = original.replace(/\s+/g, " ").trim().toLowerCase();
+      const normalized = original.replace(/\s+/g, " ").trim().toLowerCase();
       walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       while ((node = walker.next())) {
-        var text = node.textContent;
-        var norm = text.replace(/\s+/g, " ").trim().toLowerCase();
-        var idx = norm.indexOf(normalized);
+        const text = node.textContent;
+        const norm = text.replace(/\s+/g, " ").trim().toLowerCase();
+        const idx = norm.indexOf(normalized);
         if (idx !== -1) {
-          var actualStart = text.toLowerCase().indexOf(normalized.charAt(0), Math.max(0, idx - 5));
-          var actualText = text.substring(actualStart, actualStart + original.length);
+          const actualStart = text.toLowerCase().indexOf(normalized.charAt(0), Math.max(0, idx - 5));
+          const actualText = text.substring(actualStart, actualStart + original.length);
           node.textContent = text.substring(0, actualStart) + repl + text.substring(actualStart + actualText.length);
           return { success: true, fuzzy: true };
         }
@@ -417,6 +418,9 @@ async function applyToPage(replacement) {
 
 // ------------------------------------------------------------------ selection
 
+// The content script pushes selection changes as they happen, so we only
+// need one fetch when the panel opens (it may have missed earlier changes).
+// Polling here would re-inject a script into the active tab every second.
 function refreshSelection() {
   chrome.runtime.sendMessage({ action: "get_selection" }).then((res) => {
     if (res?.text && res.text !== currentSelection) {
@@ -459,4 +463,3 @@ try {
 updateSendState();
 updateClearState();
 refreshSelection();
-setInterval(refreshSelection, 1000);

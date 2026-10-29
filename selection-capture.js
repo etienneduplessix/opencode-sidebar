@@ -1,76 +1,66 @@
+// OpenCode Sidebar — content script
+// Watches the page selection and reports it to the side panel.
+//
+// The background service worker reads selections authoritatively via
+// chrome.scripting, so this script only pushes *changes*. It deliberately
+// registers no runtime message listener: answering "get_selection" from
+// every open tab would race the background's response and could return a
+// selection from the wrong tab.
+
 let lastSelection = "";
 let debounceTimer = null;
 
 function safeSendMessage(payload) {
   try {
-    if (!chrome || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") {
-      return;
-    }
-    chrome.runtime.sendMessage(payload).catch(function () {});
+    if (!chrome || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") return;
+    chrome.runtime.sendMessage(payload).catch(() => {});
   } catch (e) {
+    /* extension context torn down */
   }
 }
 
+function currentSelection() {
+  try {
+    const sel = window.getSelection();
+    return (sel && sel.toString().trim()) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function publish() {
+  const text = currentSelection();
+  if (!text) {
+    if (lastSelection) {
+      lastSelection = "";
+      safeSendMessage({ action: "selection.cleared" });
+    }
+    return;
+  }
+  if (text !== lastSelection) {
+    lastSelection = text;
+    safeSendMessage({ action: "selection.changed", text, url: location.href });
+  }
+}
+
+function schedulePublish() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(publish, 250);
+}
+
+// selectionchange covers mouse drags *and* keyboard selection
+// (shift+arrow), which a mouseup-only listener would miss.
+document.addEventListener("selectionchange", schedulePublish);
+
+// Clicking away collapses the selection — report it as cleared.
 document.addEventListener("mouseup", () => {
   clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    try {
-      const sel = window.getSelection();
-      const text = (sel && sel.toString().trim()) || "";
-      if (text && text !== lastSelection) {
-        lastSelection = text;
-        safeSendMessage({
-          action: "selection.changed",
-          text: text,
-          url: location.href
-        });
-      }
-    } catch (e) {
-    }
-  }, 300);
+  debounceTimer = setTimeout(publish, 250);
 });
 
 document.addEventListener("keyup", (e) => {
   if (e.key === "Escape") {
     lastSelection = "";
     safeSendMessage({ action: "selection.cleared" });
-  }
-});
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message && message.action === "get_selection") {
-    const sel = window.getSelection();
-    sendResponse({ text: (sel && sel.toString()) || "" });
-    return true;
-  }
-  if (message && message.action === "replace_selection") {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(document.createTextNode(message.text));
-      sendResponse({ success: true });
-    } else {
-      sendResponse({ success: false, error: "No selection" });
-    }
-    return true;
-  }
-  if (message && message.action === "highlight_selection") {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      const span = document.createElement("span");
-      span.style.backgroundColor = "rgba(139, 92, 246, 0.3)";
-      span.style.borderRadius = "3px";
-      try {
-        range.surroundContents(span);
-        sendResponse({ success: true });
-      } catch (err) {
-        sendResponse({ success: false, error: "Cannot highlight partial selection" });
-      }
-    } else {
-      sendResponse({ success: false, error: "No selection" });
-    }
-    return true;
   }
 });
