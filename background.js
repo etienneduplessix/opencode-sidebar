@@ -220,6 +220,156 @@ function detectService() {
 }
 
 /**
+ * Reads a file:// URL.
+ *
+ * fetch() refuses the file: scheme even for extensions, so directory indexes
+ * have to be read with XMLHttpRequest. Needs "Allow access to file URLs".
+ */
+function readFileUrl(url) {
+  return new Promise((resolve) => {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.onload = () => resolve(xhr.responseText || "");
+      xhr.onerror = () => resolve("");
+      xhr.send();
+    } catch (e) {
+      resolve("");
+    }
+  });
+}
+
+/**
+ * Parses Chrome's file:// directory index.
+ *
+ * The index is a generated page whose entries are embedded as
+ *   <script>addRow("name","url",isDir,size,"size",mtime,"date");</script>
+ */
+function parseDirectoryIndex(html) {
+  const entries = [];
+  const re = /addRow\("([^"]*)","([^"]*)",(\d+)/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    entries.push({
+      name: decodeURIComponent(m[1]),
+      url: decodeURIComponent(m[2]),
+      isDir: m[3] === "1"
+    });
+  }
+  return entries;
+}
+
+/** The user's home directories, read straight from the filesystem. */
+function listUserDirs() {
+  return readFileUrl("file:///Users/").then((html) => {
+    if (!html) return [];
+    return parseDirectoryIndex(html)
+      .filter((e) => e.isDir && e.name !== "Shared")
+      .map((e) => `/Users/${e.name}`);
+  });
+}
+
+// ---------------------------------------------------------------- folders
+
+/** Calls an opencode fs endpoint and returns the parsed body. */
+function apiFs(cfg, endpoint, params) {
+  const query = new URLSearchParams(params).toString();
+  return fetch(`${apiBase(cfg)}${endpoint}${query ? "?" + query : ""}`, { headers: authHeaders(cfg) }).then((res) => {
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    return res.json();
+  });
+}
+
+/** Joins a server-relative path onto the server's location and normalises it. */
+function resolvePath(root, rel) {
+  const base = root && root.endsWith("/") ? root.slice(0, -1) : root || "";
+  const joined = rel && rel.startsWith("/") ? rel : `${base}/${rel || ""}`;
+  const out = [];
+  for (const part of joined.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return `/${out.join("/")}/`;
+}
+
+function baseName(rel) {
+  const parts = String(rel || "").split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : "";
+}
+
+/**
+ * Lists the subfolders of a path using opencode's own filesystem API.
+ *
+ * The server returns paths relative to its working directory, so they are
+ * resolved to absolute paths here.
+ */
+function listDirectories(cfg, path) {
+  const target = path || ".";
+  return apiFs(cfg, "/fs/list", { path: target })
+    .then((data) => {
+      const root = (data.location && data.location.directory) || "";
+      const dirs = (data.data || [])
+        .filter((e) => e.type === "directory")
+        .map((e) => ({
+          name: baseName(e.path),
+          path: resolvePath(root, e.path),
+          rel: e.path
+        }));
+      return { success: true, root, path: resolvePath(root, target), dirs };
+    })
+    .catch((e) => ({ success: false, error: e.message, path: target }));
+}
+
+/** Searches the filesystem for directories matching a query. */
+function findDirectories(cfg, query) {
+  const q = String(query || "").trim();
+  if (!q) return Promise.resolve({ success: true, dirs: [] });
+  return apiFs(cfg, "/fs/find", { query: q, type: "directory", limit: "50" })
+    .then((data) => {
+      const root = (data.location && data.location.directory) || "";
+      const dirs = (data.data || [])
+        .filter((e) => e.type === "directory")
+        .map((e) => ({
+          name: baseName(e.path),
+          path: resolvePath(root, e.path),
+          rel: e.path
+        }));
+      return { success: true, dirs };
+    })
+    .catch((e) => ({ success: false, error: e.message }));
+}
+
+/** The projects opencode already knows about, newest first. */
+function listProjects(cfg) {
+  return fetch(apiBase(cfg) + "/project", { headers: authHeaders(cfg) })
+    .then((res) => {
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      return res.json();
+    })
+    .then((projects) => {
+      const list = Array.isArray(projects) ? projects : [];
+      list.sort((a, b) => {
+        const at = ((a.time && a.time.active) || (a.time && a.time.updated) || 0);
+        const bt = ((b.time && b.time.active) || (b.time && b.time.updated) || 0);
+        return bt - at;
+      });
+      return {
+        success: true,
+        projects: list.map((p) => ({
+          path: p.canonical || "",
+          name: baseName(p.canonical || "") || p.canonical || "",
+          vcs: p.vcs || ""
+        }))
+      };
+    })
+    .catch((e) => ({ success: false, error: e.message }));
+}
+
+/**
  * Reads opencode's service files through file:// URLs.
  * Requires "Allow access to file URLs" for the extension; returns [] otherwise.
  */
@@ -229,39 +379,29 @@ function readServiceFiles() {
     ".config/opencode/service.json"
   ];
 
-  const homeDirs = () =>
-    fetch("file:///Users/")
-      .then((res) => (res.ok ? res.text() : ""))
-      .then((html) => {
-        const dirs = [];
-        const re = /href="\/Users\/([^"/]+)\/"/g;
-        let m;
-        while ((m = re.exec(html)) !== null) {
-          if (m[1] !== "Shared" && m[1] !== ".localized") dirs.push(`/Users/${m[1]}`);
-        }
-        return dirs;
-      })
-      .catch(() => []);
-
-  return homeDirs()
+  return listUserDirs()
     .then((dirs) =>
       Promise.all(
         dirs.flatMap((dir) =>
           RELATIVE_PATHS.map((rel) => {
             const url = `file://${dir}/${rel}`;
-            return fetch(url)
-              .then((res) => (res.ok ? res.json() : null))
-              .then((data) => {
-                if (!data || typeof data !== "object") return null;
-                return {
-                  source: rel,
-                  url: typeof data.url === "string" ? data.url : "",
-                  password: typeof data.password === "string" ? data.password : "",
-                  hostname: typeof data.hostname === "string" ? data.hostname : "",
-                  port: typeof data.port === "number" ? data.port : 0
-                };
-              })
-              .catch(() => null);
+            return readFileUrl(url).then((text) => {
+              if (!text) return null;
+              let data;
+              try {
+                data = JSON.parse(text);
+              } catch (e) {
+                return null;
+              }
+              if (!data || typeof data !== "object") return null;
+              return {
+                source: rel,
+                url: typeof data.url === "string" ? data.url : "",
+                password: typeof data.password === "string" ? data.password : "",
+                hostname: typeof data.hostname === "string" ? data.hostname : "",
+                port: typeof data.port === "number" ? data.port : 0
+              };
+            });
           })
         )
       )
@@ -331,6 +471,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "detect_service":
       detectService().then(sendResponse);
+      return true;
+
+    case "list_dirs":
+      getConfig()
+        .then((cfg) => listDirectories(cfg, message.path))
+        .then(sendResponse);
+      return true;
+
+    case "find_dirs":
+      getConfig()
+        .then((cfg) => findDirectories(cfg, message.query))
+        .then(sendResponse);
+      return true;
+
+    case "list_projects":
+      getConfig()
+        .then((cfg) => listProjects(cfg))
+        .then(sendResponse);
+      return true;
+
+    case "home_dir":
+      getConfig()
+        .then((cfg) => apiFs(cfg, "/fs/list", { path: "." }))
+        .then((data) => sendResponse({ success: true, path: (data.location && data.location.directory) || "" }))
+        .catch((e) => sendResponse({ success: false, error: e.message }));
       return true;
 
     default:

@@ -452,15 +452,33 @@ function refreshSelection() {
   }).catch(() => {});
 }
 
-// ------------------------------------------------------------------ model picker
+// ------------------------------------------------------------------ folder picker
 
-let allModels = [];
-let currentModelId = "";
-let currentProviderId = "";
+const dirBrowse = document.getElementById("dir-browse");
+const folderPopover = document.getElementById("folder-popover");
+const dirSearch = document.getElementById("dir-search");
+const dirCrumbs = document.getElementById("dir-crumbs");
+const dirList = document.getElementById("dir-list");
+const dirUse = document.getElementById("dir-use");
+const dirCancel = document.getElementById("dir-cancel");
+
+let currentDir = "";
+let currentRoot = "";
+let recentDirs = [];
+
+const FOLDER_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2"/><path d="M3.5 20 8 12h13l-4.5 8z"/></svg>';
+
+const CHEVRON_ICON =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
 
 function setPopover(popover, open) {
   popover.hidden = !open;
-  const trigger = popover === modelPopover ? modelBtn : settingsBtn;
+  const trigger =
+    popover === modelPopover ? modelBtn
+    : popover === settingsPopover ? settingsBtn
+    : dirBrowse;
   trigger.setAttribute("aria-expanded", String(open));
   if (open) {
     if (popover === modelPopover) {
@@ -468,13 +486,246 @@ function setPopover(popover, open) {
       renderModels();
       setTimeout(() => modelSearch.focus(), 30);
     }
+    if (popover === folderPopover) {
+      setTimeout(() => dirSearch.focus(), 30);
+    }
   }
 }
 
 function closePopovers() {
   setPopover(modelPopover, false);
   setPopover(settingsPopover, false);
+  setPopover(folderPopover, false);
 }
+
+function escapeHtml(text) {
+  return String(text).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]);
+}
+
+function parentPath(path) {
+  if (!path || path === "/") return "/";
+  const trimmed = path.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  return idx <= 0 ? "/" : trimmed.slice(0, idx) + "/";
+}
+
+function renderCrumbs(path) {
+  dirCrumbs.innerHTML = "";
+  const parts = path.split("/").filter(Boolean);
+  const root = document.createElement("button");
+  root.textContent = "/";
+  root.addEventListener("click", () => openFolder("/"));
+  dirCrumbs.appendChild(root);
+
+  let acc = "";
+  for (const part of parts) {
+    acc += "/" + part;
+    const sep = document.createElement("span");
+    sep.className = "sep";
+    sep.textContent = "›";
+    dirCrumbs.appendChild(sep);
+
+    const btn = document.createElement("button");
+    btn.textContent = part;
+    btn.title = acc;
+    const target = acc;
+    btn.addEventListener("click", () => openFolder(target));
+    dirCrumbs.appendChild(btn);
+  }
+}
+
+function dirItem(name, path, options = {}) {
+  const item = document.createElement("div");
+  item.className = "dir-item";
+  item.title = path;
+
+  const icon = document.createElement("span");
+  icon.innerHTML = FOLDER_ICON;
+  icon.style.display = "flex";
+
+  const label = document.createElement("span");
+  label.className = "d-name";
+  label.textContent = name;
+
+  item.appendChild(icon);
+  item.appendChild(label);
+
+  if (options.showPath) {
+    const sub = document.createElement("span");
+    sub.className = "d-path";
+    sub.textContent = path;
+    item.appendChild(sub);
+  } else {
+    const go = document.createElement("span");
+    go.className = "go";
+    go.innerHTML = CHEVRON_ICON;
+    item.appendChild(go);
+  }
+
+  item.addEventListener("click", () => {
+    if (options.pick) chooseFolder(path);
+    else openFolder(path);
+  });
+  return item;
+}
+
+function renderDirs(dirs) {
+  if (!dirs.length) {
+    const empty = document.createElement("div");
+    empty.className = "dir-empty";
+    empty.textContent = "No subfolders here.";
+    dirList.appendChild(empty);
+    return;
+  }
+
+  const up = dirItem("..", parentPath(currentDir), {});
+  up.querySelector(".d-name").textContent = "..";
+  dirList.appendChild(up);
+
+  for (const dir of dirs) {
+    dirList.appendChild(dirItem(dir.name, dir.path, {}));
+  }
+}
+
+/** The projects opencode already knows about — the quickest way to switch. */
+async function renderProjects() {
+  const res = await chrome.runtime.sendMessage({ action: "list_projects" });
+  const projects = (res && res.projects) || [];
+  if (!projects.length) return false;
+
+  const heading = document.createElement("div");
+  heading.className = "dir-group";
+  heading.textContent = "Your projects";
+  dirList.appendChild(heading);
+
+  for (const project of projects.slice(0, 10)) {
+    dirList.appendChild(dirItem(project.name, project.path, { showPath: true, pick: true }));
+  }
+  return true;
+}
+
+function showMessage(text) {
+  dirList.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "dir-empty";
+  empty.innerHTML = text;
+  dirList.appendChild(empty);
+}
+
+async function openFolder(path) {
+  currentDir = path || "/";
+  renderCrumbs(currentDir);
+  showMessage("Reading…");
+
+  const res = await chrome.runtime.sendMessage({ action: "list_dirs", path: currentDir });
+  if (!res?.success) {
+    showMessage("Can't read this folder.<br><code>" + escapeHtml(res?.error || "unknown error") + "</code>");
+    return;
+  }
+  currentRoot = res.root || currentRoot;
+  currentDir = res.path || currentDir;
+  renderCrumbs(currentDir);
+
+  dirList.innerHTML = "";
+  await renderProjects();
+
+  const heading = document.createElement("div");
+  heading.className = "dir-group";
+  heading.textContent = "Folders";
+  dirList.appendChild(heading);
+  renderDirs(res.dirs || []);
+}
+
+async function searchFolders(query) {
+  const q = query.trim();
+  if (!q) return openFolder(currentDir || "/");
+
+  showMessage("Searching…");
+  const res = await chrome.runtime.sendMessage({ action: "find_dirs", query: q });
+  if (!res?.success) {
+    showMessage("Search failed.<br><code>" + escapeHtml(res?.error || "unknown error") + "</code>");
+    return;
+  }
+  dirCrumbs.innerHTML = "";
+  const dirs = res.dirs || [];
+  if (!dirs.length) {
+    showMessage("No folders match “" + escapeHtml(q) + "”.");
+    return;
+  }
+  dirList.innerHTML = "";
+  const heading = document.createElement("div");
+  heading.className = "dir-group";
+  heading.textContent = `${dirs.length} match${dirs.length === 1 ? "" : "es"}`;
+  dirList.appendChild(heading);
+  for (const dir of dirs) {
+    dirList.appendChild(dirItem(dir.name, dir.path, { showPath: true, pick: true }));
+  }
+}
+
+async function showProjects() {
+  const res = await chrome.runtime.sendMessage({ action: "list_projects" });
+  const projects = (res && res.projects) || [];
+  if (!projects.length) return;
+
+  dirList.innerHTML = "";
+  const heading = document.createElement("div");
+  heading.className = "dir-group";
+  heading.textContent = "Your projects";
+  dirList.appendChild(heading);
+
+  for (const project of projects.slice(0, 12)) {
+    dirList.appendChild(dirItem(project.name, project.path, { showPath: true, pick: true }));
+  }
+}
+
+function chooseFolder(path) {
+  if (!path) return;
+  directoryInput.value = path;
+  rememberDir(path);
+  closePopovers();
+}
+
+function rememberDir(path) {
+  recentDirs = [path, ...recentDirs.filter((p) => p !== path)].slice(0, 6);
+  try {
+    chrome.storage.local.set({ recentDirs });
+  } catch (e) {
+    /* storage unavailable */
+  }
+}
+
+async function openFolderPicker() {
+  closePopovers();
+  setPopover(folderPopover, true);
+  dirSearch.value = "";
+  showMessage("Reading…");
+
+  const start = directoryInput.value.trim();
+  await openFolder(start || "/");
+}
+
+dirBrowse.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const willOpen = folderPopover.hidden;
+  closePopovers();
+  if (willOpen) openFolderPicker();
+});
+
+let searchTimer = null;
+dirSearch.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => searchFolders(dirSearch.value), 220);
+});
+
+dirCancel.addEventListener("click", closePopovers);
+
+dirUse.addEventListener("click", () => chooseFolder(currentDir));
+
+// ------------------------------------------------------------------ model picker
+
+let allModels = [];
+let currentModelId = "";
+let currentProviderId = "";
 
 function renderModels() {
   const query = modelSearch.value.trim().toLowerCase();
@@ -660,7 +911,7 @@ settingsBtn.addEventListener("click", (e) => {
 modelSearch.addEventListener("input", renderModels);
 
 document.addEventListener("click", (e) => {
-  if (e.target.closest(".popover") || e.target.closest(".model-btn")) return;
+  if (e.target.closest(".popover") || e.target.closest(".model-btn") || e.target.closest(".dir-browse")) return;
   closePopovers();
 });
 
@@ -728,4 +979,18 @@ loadSettings().then((settings) => {
   syncModelLabel();
   // Refresh the friendly model name in the background, without blocking the UI.
   loadModels().catch(() => {});
+});
+
+try {
+  chrome.storage.local.get("recentDirs", (data) => {
+    recentDirs = (data && data.recentDirs) || [];
+  });
+} catch (e) {
+  /* storage unavailable */
+}
+
+// Typing a path by hand still counts as using that folder.
+directoryInput.addEventListener("change", () => {
+  const path = directoryInput.value.trim();
+  if (path) rememberDir(path);
 });
