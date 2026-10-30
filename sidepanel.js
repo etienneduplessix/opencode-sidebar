@@ -402,7 +402,7 @@ async function applyToPage(replacement) {
       // Serialised into the page: no closure variables allowed in here.
       let walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       let node;
-      while ((node = walker.next())) {
+      while ((node = walker.nextNode())) {
         const text = node.textContent;
         const idx = text.indexOf(original);
         if (idx !== -1) {
@@ -412,7 +412,7 @@ async function applyToPage(replacement) {
       }
       const normalized = original.replace(/\s+/g, " ").trim().toLowerCase();
       walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      while ((node = walker.next())) {
+      while ((node = walker.nextNode())) {
         const text = node.textContent;
         const norm = text.replace(/\s+/g, " ").trim().toLowerCase();
         const idx = norm.indexOf(normalized);
