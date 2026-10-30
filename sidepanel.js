@@ -440,9 +440,11 @@ async function applyToPage(replacement) {
 
 // ------------------------------------------------------------------ selection
 
-// The content script pushes selection changes as they happen, so we only
-// need one fetch when the panel opens (it may have missed earlier changes).
-// Polling here would re-inject a script into the active tab every second.
+// The content script pushes selection changes as they happen. The poll is a
+// safety net: it catches tabs that were open before the extension was
+// installed, and it is what notices that you switched to a different tab.
+// The background also installs the watcher in the tab it reads, so each poll
+// makes the next selection in that tab push straight away.
 function refreshSelection() {
   chrome.runtime.sendMessage({ action: "get_selection" }).then((res) => {
     if (res?.text && res.text !== currentSelection) {
@@ -1088,6 +1090,7 @@ try {
 updateSendState();
 updateClearState();
 refreshSelection();
+setInterval(refreshSelection, 2000);
 
 loadSettings().then((settings) => {
   if (!settings) return;
