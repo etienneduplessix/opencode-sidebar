@@ -533,17 +533,58 @@ function executeInTab(tab, func, args) {
   });
 }
 
+/**
+ * Makes sure the selection watcher is running in `tab`.
+ *
+ * Chrome only injects manifest content scripts into pages loaded after the
+ * extension was installed, so a tab that was already open has none. Without
+ * this the side panel never hears about selections made in that tab.
+ */
+function ensureCapture(tabId) {
+  return chrome.scripting
+    .executeScript({ target: { tabId }, files: ["selection-capture.js"] })
+    .catch(() => {
+      /* the tab cannot be scripted — the background read will report it */
+    });
+}
+
+/** Installs the selection watcher in every tab that is already open. */
+function captureAllOpenTabs() {
+  return chrome.tabs
+    .query({})
+    .then((tabs) =>
+      Promise.all(
+        tabs
+          .filter((tab) => tab.id && isInjectable(tab.url))
+          .map((tab) => ensureCapture(tab.id))
+      )
+    )
+    .catch(() => {});
+}
+
+// Guarded: a throw here would stop the whole service worker from loading.
+if (chrome.runtime.onInstalled) {
+  chrome.runtime.onInstalled.addListener(() => {
+    captureAllOpenTabs();
+  });
+}
+
 // ---------------------------------------------------------------- selection
 
 function readSelection() {
   return withActiveTab(
-    (tab) =>
-      executeInTab(tab, () => {
+    (tab) => {
+      // Make sure the watcher is live in this tab, so later selections push
+      // to the panel instead of only being seen on the next fetch.
+      ensureCapture(tab.id);
+
+      return executeInTab(tab, () => {
         const sel = window.getSelection();
         return sel ? sel.toString() : "";
       })
         .then((text) => ({ success: true, text, url: tab.url, title: tab.title }))
-        .catch((e) => ({ success: false, error: e.message })),
+        .catch((e) => ({ success: false, error: e.message }));
+    },
     "Cannot access browser pages"
   );
 }
