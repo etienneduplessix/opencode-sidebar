@@ -827,15 +827,20 @@
       color: var(--text-3);
     }
     .popover-hint code {
-      display: block;
+      display: inline-block;
       font-family: var(--mono);
       font-size: 10px;
       color: var(--text-2);
       background: var(--hairline-2);
       border-radius: 5px;
-      padding: 3px 6px;
-      margin-top: 4px;
+      padding: 2px 5px;
+      margin: 2px 0;
       user-select: all;
+    }
+    .popover-hint code.block {
+      display: block;
+      margin-top: 6px;
+      padding: 4px 6px;
     }
 
     .popover .save-row {
@@ -1176,14 +1181,17 @@
         </button>
       </div>
       <div class="popover-actions">
+        <button id="pick-config" class="btn">Pick config folder…</button>
+      </div>
+      <div class="popover-actions">
         <button id="detect" class="btn">Auto-detect</button>
         <button id="test" class="btn">Test</button>
       </div>
       <div id="settings-status" class="popover-status"></div>
       <div class="popover-hint">
-        Pin a stable port and password once, then it always works:
-        <code>opencode service set port 53213</code>
-        <code>opencode service set password your-secret</code>
+        The password lives in opencode's <code>service.json</code>. Pick
+        <code>~/.config/opencode</code> or <code>~/.local/state/opencode</code>, or run
+        <code class="block">cat ~/.config/opencode/service.json</code>
       </div>
       <div class="save-row">
         <button id="save-settings" class="btn primary">Save</button>

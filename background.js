@@ -871,8 +871,14 @@ function createSession(cfg, directory) {
     body: JSON.stringify(body)
   })
     .then((res) => {
-      if (!res.ok) throw new Error(`Create session failed: ${res.status} ${res.statusText}`);
-      return res.json();
+      if (res.ok) return res.json();
+      if (res.status === 401) {
+        throw new Error(
+          "OpenCode rejected the password (401). Open the connection settings (gear icon) " +
+            "and use \"Pick config folder\" to load it from opencode's service.json."
+        );
+      }
+      throw new Error(`Create session failed: ${res.status} ${res.statusText}`);
     })
     .then((data) => {
       const id = data && data.data && data.data.id;

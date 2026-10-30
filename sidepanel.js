@@ -25,6 +25,7 @@ const setPass = document.getElementById("set-pass");
 const togglePass = document.getElementById("toggle-pass");
 const detectBtn = document.getElementById("detect");
 const testBtn = document.getElementById("test");
+const pickConfigBtn = document.getElementById("pick-config");
 const saveSettingsBtn = document.getElementById("save-settings");
 
 const MARK_SVG =
@@ -261,7 +262,10 @@ async function send() {
     addMessage(stripJson(raw), "assistant", !!currentSelection, actions);
   } else {
     setStatus("err");
-    addMessage(response?.error || "Unknown error", "error");
+    const message = response?.error || "Unknown error";
+    addMessage(message, "error");
+    // An auth failure is fixable in the settings — open them right away.
+    if (/401|password|credential/i.test(message)) openSettings();
   }
 
   isProcessing = false;
@@ -825,11 +829,124 @@ function selectModel(model) {
   closePopovers();
 }
 
+// ------------------------------------------------------------------ service config
+
+/**
+ * Reads opencode's service.json through the File System Access API.
+ *
+ * The password only exists in that file, and this is the only way to reach it
+ * without asking the user for "Allow access to file URLs". The user picks the
+ * folder that contains service.json — either ~/.config/opencode or
+ * ~/.local/state/opencode — and the handle is remembered for next time.
+ */
+async function pickServiceConfig() {
+  if (typeof window.showDirectoryPicker !== "function") {
+    showSettingsStatus("This browser cannot open a folder picker. Use Auto-detect instead.", "err");
+    return;
+  }
+
+  let dirHandle;
+  try {
+    dirHandle = await window.showDirectoryPicker({ mode: "read", startIn: await lastHandle() || undefined });
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // user cancelled
+    showSettingsStatus("Could not open the folder picker: " + (e.message || e), "err");
+    return;
+  }
+
+  showSettingsStatus("Reading service.json…");
+
+  try {
+    const fileHandle = await dirHandle.getFileHandle("service.json");
+    const file = await fileHandle.getFile();
+    const data = JSON.parse(await file.text());
+
+    const settings = {};
+    if (typeof data.password === "string") settings.password = data.password;
+    if (typeof data.hostname === "string" && data.hostname) settings.host = data.hostname;
+    if (typeof data.port === "number" && data.port) settings.port = data.port;
+    if (typeof data.url === "string" && data.url) {
+      try {
+        const url = new URL(data.url);
+        settings.host = url.hostname;
+        settings.port = Number(url.port) || 80;
+      } catch (e) {
+        /* ignore malformed url */
+      }
+    }
+
+    if (!settings.password) {
+      showSettingsStatus("That folder's service.json has no password.", "err");
+      return;
+    }
+
+    await rememberHandle(dirHandle);
+    await chrome.runtime.sendMessage({ action: "save_settings", settings });
+    fillSettings({ ...(await chrome.runtime.sendMessage({ action: "get_settings" })) });
+    showSettingsStatus(`Loaded the password from ${dirHandle.name}/service.json`, "ok");
+  } catch (e) {
+    showSettingsStatus(
+      e && e.name === "NotFoundError"
+        ? "No service.json in that folder — pick ~/.config/opencode"
+        : "Could not read service.json: " + (e.message || e),
+      "err"
+    );
+  }
+}
+
+// --- remembering the picked folder (IndexedDB, since handles are not JSON)
+
+function idb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("opencode-sidebar", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("handles");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function rememberHandle(handle) {
+  try {
+    const db = await idb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("handles", "readwrite");
+      tx.objectStore("handles").put(handle, "serviceDir");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (e) {
+    /* not critical */
+  }
+}
+
+async function lastHandle() {
+  try {
+    const db = await idb();
+    const handle = await new Promise((resolve, reject) => {
+      const tx = db.transaction("handles", "readonly");
+      const req = tx.objectStore("handles").get("serviceDir");
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return handle;
+  } catch (e) {
+    return null;
+  }
+}
+
 // ------------------------------------------------------------------ settings
 
 function showSettingsStatus(text, kind) {
   settingsStatus.textContent = text;
   settingsStatus.className = "popover-status show" + (kind ? " " + kind : "");
+}
+
+function openSettings() {
+  closePopovers();
+  setPopover(settingsPopover, true);
+  loadSettings();
 }
 
 function fillSettings(settings) {
@@ -907,7 +1024,6 @@ settingsBtn.addEventListener("click", (e) => {
     loadSettings();
   }
 });
-
 modelSearch.addEventListener("input", renderModels);
 
 document.addEventListener("click", (e) => {
@@ -937,6 +1053,7 @@ togglePass.addEventListener("click", () => {
 
 detectBtn.addEventListener("click", detectService);
 testBtn.addEventListener("click", testConnection);
+pickConfigBtn.addEventListener("click", pickServiceConfig);
 saveSettingsBtn.addEventListener("click", saveSettings);
 
 setHost.addEventListener("keydown", (e) => { if (e.key === "Enter") saveSettings(); });
