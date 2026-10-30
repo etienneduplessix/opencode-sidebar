@@ -1,1 +1,9 @@
 .DS_Store
+
+# Private session notes and local secrets. Never commit these.
+CONTEXT.md
+*.env
+.env
+.env.*
+credentials
+.creds-test

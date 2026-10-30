@@ -1,6 +1,10 @@
 # OpenCode Sidebar
 
-A Chrome side panel that puts [OpenCode](https://opencode.ai) next to whatever page you're reading. Select text, ask OpenCode about it, and apply the answer back into the page.
+A Chrome side panel that puts [OpenCode](https://opencode.ai) next to the page you are reading: select text, ask about it, and apply the answer back into the page.
+
+## Screenshot
+
+_Placeholder. Add a screenshot or a short GIF of the side panel here, for example `docs/screenshot.png`._
 
 ## What it does
 
@@ -12,15 +16,48 @@ A Chrome side panel that puts [OpenCode](https://opencode.ai) next to whatever p
 - **Project folder** — work in the context of a real project folder
 - **Model picker** — every model your OpenCode server exposes, searchable and grouped by provider
 
+## Requirements
+
+- Chrome, or another Chromium browser with the side panel
+- [OpenCode](https://opencode.ai) **v2.0.27** — the HTTP API used here was checked against that release (see the contract notes at the top of `background.js`)
+- The OpenCode server running on the same machine as the browser
+
+### Start the OpenCode server
+
+The sidebar talks to OpenCode's HTTP API on localhost. The usual target is the shared background service. On macOS, Linux, and WSL the `latest` channel listens on `127.0.0.1:49374` (`49375` for the `local` channel). See where it is, or start it:
+
+```bash
+opencode service status
+opencode service start
+```
+
+Basic auth always uses the username `opencode`. The password is generated, and it changes when the service restarts, which drops the sidebar's connection. Pin a port and a password, then start the service again (`service set` stops it):
+
+```bash
+opencode service set port 49374
+opencode service set password "a-long-secret"
+opencode service start
+```
+
+Use the same port and password in the sidebar's connection settings. Any fixed port is fine, as long as both sides match.
+
+To run a foreground server instead of the background service:
+
+```bash
+OPENCODE_PASSWORD="a-long-secret" opencode serve --port 4096
+```
+
+**Auto-detect** tries ports `49374`, `49375`, and `4096`.
+
 ## Install
 
 1. Open `chrome://extensions`
 2. Turn on **Developer mode**
 3. **Load unpacked** and select this folder (the one with `manifest.json`)
 
-## Connect it to OpenCode
+The extension needs access to all sites because it reads the selection and the page, and writes an answer back, on whatever tab you have open.
 
-The sidebar talks to OpenCode's HTTP API with HTTP Basic auth.
+## Connect it to OpenCode
 
 **1. Load the credentials.** In the sidebar, click the ⚙ gear icon, then **Pick config folder…** and select:
 
@@ -28,23 +65,40 @@ The sidebar talks to OpenCode's HTTP API with HTTP Basic auth.
 ~/.config/opencode
 ```
 
-The extension reads `service.json` from that folder and fills in the password for you. (To do it by hand instead: `cat ~/.config/opencode/service.json` and paste the `password` value.)
+The extension reads `service.json` from that folder and fills in the password for you. To do it by hand: `cat ~/.config/opencode/service.json` and paste the `password` value. The live server also records itself at `~/.local/state/opencode/service.json`.
 
-**2. Check it.** Click **Test** — you should see `Connected to http://127.0.0.1:49374/api`. Click **Auto-detect** if the host and port are wrong too.
+**2. Check it.** Click **Test**. You should see `Connected to http://127.0.0.1:49374/api`. Click **Auto-detect** if the host or port is wrong.
 
-### Making it permanent
+## Use with Featherless
 
-OpenCode generates a fresh password when its background service restarts, which breaks the connection. Pin both:
+[Featherless](https://featherless.ai/docs/api-overview-and-common-options) is an OpenAI-compatible API. OpenCode does not need a code change in this extension: add Featherless as a custom provider, then pick the model in the sidebar.
 
-```bash
-opencode service set port 53213
-opencode service set password your-own-password
-opencode service restart
+Put this in `~/.config/opencode/opencode.json` (global) or in a project's `opencode.json`. The base URL is `https://api.featherless.ai/v1`. The `apiKey` line is a placeholder — export `FEATHERLESS_API_KEY` in the environment OpenCode runs in, and do not commit a real key.
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "featherless": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Featherless",
+      "options": {
+        "baseURL": "https://api.featherless.ai/v1",
+        "apiKey": "{env:FEATHERLESS_API_KEY}"
+      },
+      "models": {
+        "your-org/your-model": {
+          "name": "Your Featherless model"
+        }
+      }
+    }
+  }
+}
 ```
 
-Then put the same values in the connection settings and they will keep working.
+Replace `your-org/your-model` with a model id from your Featherless account. Restart OpenCode and choose the model from the sidebar picker.
 
-> The default port depends on your OpenCode release channel (`49374` for `latest`, `49375` for `local`), so **Auto-detect** is the reliable way to find it.
+This follows [OpenCode's custom provider docs](https://opencode.ai/docs/providers/): `@ai-sdk/openai-compatible` is the package for a `/v1/chat/completions` endpoint, which is what Featherless serves. `{env:FEATHERLESS_API_KEY}` is OpenCode's env-var syntax for `options.apiKey`.
 
 ## How it is built
 
