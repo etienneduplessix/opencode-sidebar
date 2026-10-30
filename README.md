@@ -20,6 +20,7 @@ Version 0.3.0
 
 - Chrome, or another Chromium browser with Manifest V3 side panels
 - [OpenCode](https://opencode.ai) **v2**. The extension speaks the v2 HTTP API (checked against OpenCode 2.0.27): Basic auth, username `opencode`, and the session / model / prompt endpoints under `/api`
+- A browser-control tool in that OpenCode server (MCP or skill). Required for **Suggest actions** and **Run N actions**
 - Node.js only if you want the mock server below. The extension itself has no build step
 
 ## Install
@@ -58,6 +59,38 @@ In the panel, open the gear icon:
 4. **Auto-detect** tries the current settings, those service files (Chrome has to allow file URLs), the ports above, and `opencode.local`
 
 The model chip fills in from `GET /api/model` once the password is accepted. Pick a model there, or press `Ctrl+K` / `Cmd+K`.
+
+## Browser control (required for page actions)
+
+The extension does not name a skill, MCP server, or agent. **Suggest actions** still asks your OpenCode server for clicks, fills, and navigation, so that server needs a browser-control tool of its own. Highlight, rewrite, and **Apply to page** do not.
+
+Playwright MCP is the usual one. Put this in `~/.config/opencode/opencode.json`, or in a project `opencode.json`. On v2, servers live under `mcp.servers`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "playwright": {
+        "type": "local",
+        "command": ["npx", "-y", "@playwright/mcp"]
+      }
+    }
+  }
+}
+```
+
+Restart OpenCode. `opencode mcp list` should show `playwright` connected.
+
+Chrome DevTools MCP uses the same block. Name the server `chrome-devtools` and set `command` to `["npx", "-y", "chrome-devtools-mcp@latest", "--autoConnect"]`. Turn on remote debugging at `chrome://inspect/#remote-debugging` first.
+
+Or install OpenCode's browser plugin, which registers the `browser` skill (mention it as `@browser`):
+
+```bash
+opencode plugin add @opencode-ai/browser-control
+```
+
+A skill you add yourself is a `SKILL.md` file at `~/.config/opencode/skills/<name>/SKILL.md`, or `.opencode/skills/<name>/SKILL.md` in a project.
 
 ## Try the UI without a model
 
@@ -134,6 +167,7 @@ If you point OpenCode at Featherless or another provider, that traffic is betwee
 - **Could not reach the server** or **Failed to fetch**. Nothing is listening, or the port is wrong. Check `opencode service status`. The panel defaults to `127.0.0.1:49374`. Auto-detect also tries `49375` and `4096`.
 - **Wrong username or password**, or a **401**. The username is `opencode`. The password is `OPENCODE_PASSWORD` for `opencode serve`, or the `password` field in `service.json` for the background service. The gear menu opens on its own after an auth failure. Save, then Test.
 - **CORS or Failed to fetch when the process is clearly running.** Chrome uses the same message for a refused connection and a blocked origin. This extension's service worker is allowed to call the host you configured. A server that allowlists browser origins can still refuse one. For OpenCode, add the origin with `opencode serve --cors <origin>` or `opencode service set cors <origin>`, then start the service again. Confirm the host is `127.0.0.1` and not only a public name.
+- **Suggest actions** never proposes clicks, or OpenCode says it cannot use a browser. No browser-control MCP or skill is loaded. Add the `playwright` server under `mcp.servers` (see above) or install the `browser` skill, then restart OpenCode. `opencode mcp list` shows whether the server connected.
 - **Project folder not found.** The directory has to exist on the machine running OpenCode. A path from another computer will not. Clear the field to use the server's working directory.
 - **Cannot read browser pages**, or **Could not apply**. `chrome://` pages and the extensions page cannot be scripted. Reload a normal `http` or `https` tab. Apply only works when the highlighted text is still in the page as one stretch of text.
 
