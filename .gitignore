@@ -7,3 +7,11 @@ CONTEXT.md
 .env.*
 credentials
 .creds-test
+
+node_modules/
+scripts/.tmp/
+docs/frames/
+*.mp4
+playwright-report/
+test-results/
+.chrome-profile/

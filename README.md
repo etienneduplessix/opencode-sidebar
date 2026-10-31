@@ -1,37 +1,47 @@
 # OpenCode Sidebar
 
-A Chrome side panel that puts [OpenCode](https://opencode.ai) next to the page you are reading: select text, ask about it, and apply the answer back into the page.
+A Chrome side panel that puts a local [OpenCode](https://opencode.ai) server next to the page you are reading. Highlight text, ask for a fix, and write the answer back into the page.
 
-## Screenshot
+![Highlight a paragraph, shorten it, apply the edit, then run the suggested page actions](docs/demo.gif)
 
-_Placeholder. Add a screenshot or a short GIF of the side panel here, for example `docs/screenshot.png`._
+Version 0.3.0
 
 ## What it does
 
-- **Selection capture** — highlight text on any page and the sidebar picks it up automatically
-- **Chat** — ask about the selection, the page, or anything else
-- **Read page** — pulls the page's text, links and form fields into the conversation
-- **Suggest actions** — OpenCode proposes clicks, fills and navigation, and you run them
-- **Apply to page** — write the reply straight back into the original text
-- **Project folder** — work in the context of a real project folder
-- **Model picker** — every model your OpenCode server exposes, searchable and grouped by provider
+- Watches the text you highlight and keeps it next to the conversation
+- One-click **Fix grammar**, **Shorten**, **Explain**, **Rewrite**, and **Summarize**
+- **Read page** pulls the page text, links, and form fields into the chat
+- **Suggest actions** asks OpenCode for clicks, fills, and navigation, then **Run N actions** performs them after you confirm
+- **Apply to page** replaces the original selection with the reply
+- **Model picker** lists every model the server exposes, searchable and grouped by provider
+- **Project folder** picker so OpenCode works in a real directory on that machine
 
 ## Requirements
 
-- Chrome, or another Chromium browser with the side panel
-- [OpenCode](https://opencode.ai) **v2.0.27** — the HTTP API used here was checked against that release (see the contract notes at the top of `background.js`)
-- The OpenCode server running on the same machine as the browser
+- Chrome, or another Chromium browser with Manifest V3 side panels
+- [OpenCode](https://opencode.ai) **v2**. The extension speaks the v2 HTTP API (checked against OpenCode 2.0.27): Basic auth, username `opencode`, and the session / model / prompt endpoints under `/api`
+- A browser-control tool in that OpenCode server (MCP or skill). Required for **Suggest actions** and **Run N actions**
+- Node.js only if you want the mock server below. The extension itself has no build step
 
-### Start the OpenCode server
+## Install
 
-The sidebar talks to OpenCode's HTTP API on localhost. The usual target is the shared background service. On macOS, Linux, and WSL the `latest` channel listens on `127.0.0.1:49374` (`49375` for the `local` channel). See where it is, or start it:
+1. Clone this repository
+2. Open `chrome://extensions`
+3. Turn on **Developer mode**
+4. Click **Load unpacked** and choose this folder (the one that contains `manifest.json`)
+5. Click the extension's toolbar icon to open the side panel. On a page that was already open, reload it once so the selection watcher is injected
+
+## Setup
+
+The panel talks to OpenCode on your machine. Nothing in the extension starts the server for you.
+
+**Foreground server.** `opencode serve` listens on `127.0.0.1`. Set a password with `OPENCODE_PASSWORD` (the username is always `opencode`):
 
 ```bash
-opencode service status
-opencode service start
+OPENCODE_PASSWORD="a-long-secret" opencode serve --port 49374
 ```
 
-Basic auth always uses the username `opencode`. The password is generated, and it changes when the service restarts, which drops the sidebar's connection. Pin a port and a password, then start the service again (`service set` stops it):
+**Background service.** The same API, managed by OpenCode. `opencode service status` prints the address. Pin a port and a password, then start it (`service set` stops the running service):
 
 ```bash
 opencode service set port 49374
@@ -39,41 +49,78 @@ opencode service set password "a-long-secret"
 opencode service start
 ```
 
-Use the same port and password in the sidebar's connection settings. Any fixed port is fine, as long as both sides match.
+A fresh service password changes when the background service restarts. Pinning the port and password, as above, keeps the panel connected. The extension's default port is `49374`, which is the `latest` channel. Auto-detect also tries `49375` (`local`) and `4096` (the older `opencode serve` default).
 
-To run a foreground server instead of the background service:
+In the panel, open the gear icon:
+
+1. Host `127.0.0.1`, the port you chose, username `opencode`, and the password
+2. **Save**, then **Test**. A good connection reports `Connected to http://127.0.0.1:49374/api`
+3. Or **Pick config folder…** and choose `~/.config/opencode` or `~/.local/state/opencode`. The extension reads `service.json` from that folder and fills in the password. To copy it yourself: `cat ~/.config/opencode/service.json`
+4. **Auto-detect** tries the current settings, those service files (Chrome has to allow file URLs), the ports above, and `opencode.local`
+
+The model chip fills in from `GET /api/model` once the password is accepted. Pick a model there, or press `Ctrl+K` / `Cmd+K`.
+
+## Browser control (required for page actions)
+
+The extension does not name a skill, MCP server, or agent. **Suggest actions** still asks your OpenCode server for clicks, fills, and navigation, so that server needs a browser-control tool of its own. Highlight, rewrite, and **Apply to page** do not.
+
+Playwright MCP is the usual one. Put this in `~/.config/opencode/opencode.json`, or in a project `opencode.json`. On v2, servers live under `mcp.servers`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "playwright": {
+        "type": "local",
+        "command": ["npx", "-y", "@playwright/mcp"]
+      }
+    }
+  }
+}
+```
+
+Restart OpenCode. `opencode mcp list` should show `playwright` connected.
+
+Chrome DevTools MCP uses the same block. Name the server `chrome-devtools` and set `command` to `["npx", "-y", "chrome-devtools-mcp@latest", "--autoConnect"]`. Turn on remote debugging at `chrome://inspect/#remote-debugging` first.
+
+Or install OpenCode's browser plugin, which registers the `browser` skill (mention it as `@browser`):
 
 ```bash
-OPENCODE_PASSWORD="a-long-secret" opencode serve --port 4096
+opencode plugin add @opencode-ai/browser-control
 ```
 
-**Auto-detect** tries ports `49374`, `49375`, and `4096`.
+A skill you add yourself is a `SKILL.md` file at `~/.config/opencode/skills/<name>/SKILL.md`, or `.opencode/skills/<name>/SKILL.md` in a project.
 
-## Install
+## Try the UI without a model
 
-1. Open `chrome://extensions`
-2. Turn on **Developer mode**
-3. **Load unpacked** and select this folder (the one with `manifest.json`)
+`scripts/mock-opencode-server.js` is a small Node server with no dependencies. It implements only the endpoints this extension calls and returns canned replies, including a short streamed poll before the message is marked finished. Use it to click through the panel. It is not a model.
 
-The extension needs access to all sites because it reads the selection and the page, and writes an answer back, on whatever tab you have open.
-
-## Connect it to OpenCode
-
-**1. Load the credentials.** In the sidebar, click the ⚙ gear icon, then **Pick config folder…** and select:
-
-```
-~/.config/opencode
+```bash
+node scripts/mock-opencode-server.js
 ```
 
-The extension reads `service.json` from that folder and fills in the password for you. To do it by hand: `cat ~/.config/opencode/service.json` and paste the `password` value. The live server also records itself at `~/.local/state/opencode/service.json`.
+It listens on `http://127.0.0.1:49374`. Sign in as username `opencode`, password `demo` (override with `MOCK_OPENCODE_PORT` and `MOCK_OPENCODE_PASSWORD`). Open `http://127.0.0.1:49374/demo` and use the panel against that page. The recording above was made this way.
 
-**2. Check it.** Click **Test**. You should see `Connected to http://127.0.0.1:49374/api`. Click **Auto-detect** if the host or port is wrong.
+## Usage
 
-## Use with Featherless
+Highlight a paragraph. The panel keeps the selection. **Shorten** (or Fix, Explain, Rewrite) sends it to OpenCode. **Apply to page** writes the reply back over the original text. **Copy** puts it on the clipboard.
 
-[Featherless](https://featherless.ai/docs/api-overview-and-common-options) is an OpenAI-compatible API. OpenCode does not need a code change in this extension: add Featherless as a custom provider, then pick the model in the sidebar.
+![Side panel with a shortened paragraph and Apply to page](docs/shorten-response.png)
 
-Put this in `~/.config/opencode/opencode.json` (global) or in a project's `opencode.json`. The base URL is `https://api.featherless.ai/v1`. The `apiKey` line is a placeholder — export `FEATHERLESS_API_KEY` in the environment OpenCode runs in, and do not commit a real key.
+The model list is every model that server is offering, grouped by provider.
+
+![Model picker grouped by provider](docs/model-picker.png)
+
+**Read page** stores the current tab for this conversation. **Summarize** and **Suggest actions** read the page first. Suggested actions come back as a short note plus a JSON block. The JSON is hidden in the bubble. **Run N actions** performs them on the active tab, one at a time, and reports each result. You can also type your own prompt. Enter sends, Shift+Enter inserts a line.
+
+![Suggested actions ready to run](docs/page-actions.png)
+
+The optional project folder is a path on the machine running OpenCode, such as `~/projects/my-app`. Leave it empty to use the server's working directory. The folder list comes from OpenCode's own filesystem API, so the extension does not ask for extra disk permissions.
+
+## Using open models via Featherless
+
+Optional. OpenCode can call [Featherless](https://featherless.ai) as an OpenAI-compatible provider. Put this in `opencode.json` (the project file, or `~/.config/opencode/opencode.json`):
 
 ```json
 {
@@ -87,8 +134,8 @@ Put this in `~/.config/opencode/opencode.json` (global) or in a project's `openc
         "apiKey": "{env:FEATHERLESS_API_KEY}"
       },
       "models": {
-        "your-org/your-model": {
-          "name": "Your Featherless model"
+        "Qwen/Qwen3-Coder-30B-A3B": {
+          "name": "Qwen3 Coder"
         }
       }
     }
@@ -96,23 +143,52 @@ Put this in `~/.config/opencode/opencode.json` (global) or in a project's `openc
 }
 ```
 
-Replace `your-org/your-model` with a model id from your Featherless account. Restart OpenCode and choose the model from the sidebar picker.
+Export `FEATHERLESS_API_KEY` in the environment of `opencode serve`. The background service does not inherit your shell, so pass it with `opencode service set env FEATHERLESS_API_KEY <your-key>` and start the service again. Then choose the model in the panel.
 
-This follows [OpenCode's custom provider docs](https://opencode.ai/docs/providers/): `@ai-sdk/openai-compatible` is the package for a `/v1/chat/completions` endpoint, which is what Featherless serves. `{env:FEATHERLESS_API_KEY}` is OpenCode's env-var syntax for `options.apiKey`.
+## Permissions
 
-## How it is built
-
-| File | Role |
+| Permission | Why |
 |---|---|
-| `manifest.json` | MV3 manifest |
-| `background.js` | Service worker — OpenCode API, page reading, page actions |
-| `sidepanel.html` / `sidepanel.js` | The sidebar UI and its behaviour |
-| `selection-capture.js` | Content script that watches your selection |
-| `icons/` | App icon set |
+| `sidePanel` | The UI lives in Chrome's side panel |
+| `storage` | Host, port, password, model, and recent folders stay in `chrome.storage.local` |
+| `tabs`, `activeTab`, `scripting` | Read the selection, read the page, apply text, and run clicks and fills on the active tab |
+| Host access to all sites | The content script has to see highlights on whatever tab you are using, and page actions have to run there. The service worker also needs it to call your OpenCode server |
 
-The folder picker and model list are built on OpenCode's own API (`/api/fs/list`, `/api/fs/find`, `/api/project`, `/api/model`), so the extension needs no special filesystem permissions and always sees the same view of your disk that OpenCode does.
+The extension does not phone home. All-sites access is what lets it work on the page you already have open.
 
-## Notes
+## Privacy
 
-- Credentials are stored in `chrome.storage.local` and only ever sent to `127.0.0.1`.
-- The service worker installs the selection watcher into tabs that were already open, since Chrome only injects content scripts into newly loaded pages.
+Settings, including the password, stay in the browser. Requests go only to the host and port you configured, as HTTP Basic auth, default `127.0.0.1`. The highlighted text is sent when you ask about it. Page text is sent when you click **Read page**, or when the prompt is about the page (**Summarize**, **Suggest actions**, or a message that refers to the page). No analytics, and no account with this extension.
+
+If you point OpenCode at Featherless or another provider, that traffic is between OpenCode and the provider. This extension never sees the API key.
+
+## Troubleshooting
+
+- **Could not reach the server** or **Failed to fetch**. Nothing is listening, or the port is wrong. Check `opencode service status`. The panel defaults to `127.0.0.1:49374`. Auto-detect also tries `49375` and `4096`.
+- **Wrong username or password**, or a **401**. The username is `opencode`. The password is `OPENCODE_PASSWORD` for `opencode serve`, or the `password` field in `service.json` for the background service. The gear menu opens on its own after an auth failure. Save, then Test.
+- **CORS or Failed to fetch when the process is clearly running.** Chrome uses the same message for a refused connection and a blocked origin. This extension's service worker is allowed to call the host you configured. A server that allowlists browser origins can still refuse one. For OpenCode, add the origin with `opencode serve --cors <origin>` or `opencode service set cors <origin>`, then start the service again. Confirm the host is `127.0.0.1` and not only a public name.
+- **Suggest actions** never proposes clicks, or OpenCode says it cannot use a browser. No browser-control MCP or skill is loaded. Add the `playwright` server under `mcp.servers` (see above) or install the `browser` skill, then restart OpenCode. `opencode mcp list` shows whether the server connected.
+- **Project folder not found.** The directory has to exist on the machine running OpenCode. A path from another computer will not. Clear the field to use the server's working directory.
+- **Cannot read browser pages**, or **Could not apply**. `chrome://` pages and the extensions page cannot be scripted. Reload a normal `http` or `https` tab. Apply only works when the highlighted text is still in the page as one stretch of text.
+
+## Contributing
+
+Issues and pull requests are welcome. The panel is plain JavaScript: `manifest.json`, `background.js`, `sidepanel.html`, `sidepanel.js`, and `selection-capture.js`. There is no build.
+
+```bash
+node scripts/check-version.js
+```
+
+That checks the README still mentions the version in `manifest.json`.
+
+To re-record the GIF and screenshots (Playwright, a local mock server, and `ffmpeg`):
+
+```bash
+npm install
+npx playwright install chromium
+node scripts/record-demo.js
+```
+
+## License
+
+[MIT](LICENSE)
